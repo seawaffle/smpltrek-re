@@ -1,0 +1,49 @@
+{
+  "FUNK 1": {
+    "audio_sha256": "2c53667dc02c1608e2866d64dc55bc14edb4a2750c0f03ebf871678be56eb059",
+    "cycles": 6696000000,
+    "fault": null,
+    "frames": [
+      {
+        "label": "loaded",
+        "sha256": "9973f53a5786f5c2a1402460502a6af63b8b7464121020d6a4ece4f29d270dc5"
+      },
+      {
+        "label": "playing-2s",
+        "sha256": "f473c0cc7221c67beb347ad49e616518a78b0f6137c22b6a575791eba1712553"
+      },
+      {
+        "label": "playing-4s",
+        "sha256": "d47d0c144a5cbe70479166066ed467222f9562b9dccdbcdc5a49eb69b9af3e89"
+      },
+      {
+        "label": "playing-6s",
+        "sha256": "a24ea84cd0b0ce042961cd2e2024f346e34a6270fc845ee5d9cbd2fd5ad30f56"
+      },
+      {
+        "label": "playing-8s",
+        "sha256": "69abc617eccded430816b9de16ee315afbf7097a6d573abf7c392d9da4ae2a3e"
+      },
+      {
+        "label": "playing-10s",
+        "sha256": "47266a25f492427ccbe4399037751ac317ba777a23036aecd746d58b0bda3996"
+      }
+    ],
+    "project": {
+      "bpm": 104,
+      "bytes": 282320,
+      "clips": 15,
+      "config_sha256": "56f612ab5321625099020e2321a3e6a27c6e6e1ca58f52af79a058fbbe769ebe",
+      "files": 232,
+      "genre": "FUNK",
+      "kit": "JazzFusion Kit",
+      "seed": 1
+    },
+    "rms": 0.055673,
+    "sd": {
+      "bytes_read": 2245192,
+      "bytes_written": 38912
+    },
+    "underruns": 0
+  }
+}

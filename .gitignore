@@ -1,0 +1,17 @@
+# Sonicware firmware updates and manuals are copyrighted and not redistributed here.
+# Download them from sonicware.co.jp into firmware/ (layout in firmware/README.md).
+firmware/*
+!firmware/README.md
+docs/manuals/
+# Working outputs (listings, ELFs and Ghidra projects contain Sonicware code): regenerate locally
+/work
+# Self-built tic6x toolchain: rebuild with tools/toolchain/build_tic6x_*.sh
+/tools/binutils-build
+/tools/gcc-build
+/tools/tic6x
+# Derived update images: regenerate with tools/palette_swap.py or tools/sonicware_integrity.py
+experiments/*.bin
+__pycache__/
+*.pyc
+node_modules/
+*:Zone.Identifier

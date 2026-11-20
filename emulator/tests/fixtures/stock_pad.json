@@ -1,0 +1,46 @@
+{
+  "single": {
+    "audio_sha256": "8a39d2abd3999ab73c34db2476849cddf303ce389b35826850f9a700589b4a90",
+    "cycles": 4181280000,
+    "fault": null,
+    "frames": [
+      {
+        "label": "kit",
+        "sha256": "3ab54d28067b94ab866387f2222519375c488ca48d7109184895a841915c54c8"
+      },
+      {
+        "label": "hit",
+        "sha256": "3ab54d28067b94ab866387f2222519375c488ca48d7109184895a841915c54c8"
+      }
+    ],
+    "messages": 0,
+    "rms": 0.0,
+    "sd": {
+      "bytes_read": 2018376,
+      "bytes_written": 38912
+    },
+    "underruns": 0
+  },
+  "stream": {
+    "audio_sha256": "246a1740b8a6fee7f681f24399ddb17908c74c5063b6ebd13581fed036455960",
+    "cycles": 4181280000,
+    "fault": null,
+    "frames": [
+      {
+        "label": "kit",
+        "sha256": "3ab54d28067b94ab866387f2222519375c488ca48d7109184895a841915c54c8"
+      },
+      {
+        "label": "hit",
+        "sha256": "3ab54d28067b94ab866387f2222519375c488ca48d7109184895a841915c54c8"
+      }
+    ],
+    "messages": 47140,
+    "rms": 0.060438,
+    "sd": {
+      "bytes_read": 2018376,
+      "bytes_written": 38912
+    },
+    "underruns": 0
+  }
+}

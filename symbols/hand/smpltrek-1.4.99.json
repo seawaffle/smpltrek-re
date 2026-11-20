@@ -1,0 +1,380 @@
+{
+  "format": "sonicware-symbols/1",
+  "source": {
+    "file": "SmplTrek v1.4.99/SmplTrek.bin",
+    "sha256": "8d8ab67cb043d8602bd0e8d30a61922e65e53e3040ef64cd3c90c4ff016a6037",
+    "mmtd_version": "1.4.99"
+  },
+  "notes": [
+    "Hand-written per-product findings; merged into the generated file of the same name by carry_symbols.py. Edit this file, not the generated one.",
+    "confidence: confirmed = the whole function was read and does exactly this; probable = role inferred from consistent call sites, details may be wrong; speculative = a lead only."
+  ],
+  "symbols": [
+    {
+      "address": "0xc1434b68",
+      "name": "AudioEngine::AudioFileControlTask::post_unlink",
+      "kind": "function",
+      "prototype": "int post_unlink(AudioFileControlTask *this, const char *path)",
+      "confidence": "probable",
+      "prefix_sha256": "77776f429d79d51e1ea85e74215e2958",
+      "evidence": [
+        "Posts {10, 0, 0, 0, path} to the AudioFileControlTask mailbox and waits; this image's run loop sends command 10 to file_unlink (jump table read 2026-11-10). Overrides a func_match carry: the path requests differ only in the command constant, and the carry had swapped them."
+      ]
+    },
+    {
+      "address": "0xc1434bb8",
+      "name": "AudioEngine::AudioFileControlTask::post_exists",
+      "kind": "function",
+      "prototype": "int post_exists(AudioFileControlTask *this, const char *path)",
+      "confidence": "probable",
+      "prefix_sha256": "fe6a81345dc778f6e9577100580764ea",
+      "evidence": [
+        "Posts {8, 0, 0, 0, path} to the AudioFileControlTask mailbox and waits; this image's run loop sends command 8 to file_exists (jump table read 2026-11-10). Overrides a func_match carry: the path requests differ only in the command constant, and the carry had swapped them."
+      ]
+    },
+    {
+      "address": "0xc1434c94",
+      "name": "AudioEngine::AudioFileControlTask::post_mkdir",
+      "kind": "function",
+      "prototype": "int post_mkdir(AudioFileControlTask *this, const char *path)",
+      "confidence": "probable",
+      "prefix_sha256": "c1d351b821ae7a53c617b0a456d3160d",
+      "evidence": [
+        "Posts {9, 0, 0, 0, path} to the AudioFileControlTask mailbox and waits; this image's run loop sends command 9 to file_mkdir (jump table read 2026-11-10). Overrides a func_match carry: the path requests differ only in the command constant, and the carry had swapped them."
+      ]
+    },
+    {
+      "address": "0xc14b4180",
+      "name": "log10f",
+      "kind": "function",
+      "prototype": "float log10f(float x)",
+      "confidence": "confirmed",
+      "prefix_sha256": "4fb88f759455720633cf888709ce347e",
+      "evidence": [
+        "Unique 72-byte relocation-masked match (4 bytes masked) to log10f in TI CGT 8.3.13 rts6740_elf.lib log10f.c.obj .text:log10f, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14b70e0",
+      "name": "sprintf_outs",
+      "kind": "function",
+      "prototype": "int _outs(char *s, void *op, int len)",
+      "confidence": "confirmed",
+      "prefix_sha256": "92f47a9f85836148fed8b6e2e6530d1b",
+      "evidence": [
+        "Unique 64-byte relocation-masked match (4 bytes masked) to _outs in TI CGT 8.3.13 rts6740_elf.lib sprintf.c.obj .text:_outs, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc1455cc0",
+      "name": "Exception_handler",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_family_c64p_Exception_handler__I(xdc_Bool abortFlag)",
+      "confidence": "confirmed",
+      "prefix_sha256": "f048889f96b2a98c9328ecbcbaf43413",
+      "evidence": [
+        "Unique 1920-byte relocation-masked match to ti_sysbios_family_c64p_Exception_handler__I in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc148b100",
+      "name": "HeapMem_Instance_init",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_heaps_HeapMem_Instance_init__E(ti_sysbios_heaps_HeapMem_Object *obj, const ti_sysbios_heaps_HeapMem_Params *prms)",
+      "confidence": "confirmed",
+      "prefix_sha256": "6ca3caec5f7080d3a02e978e10bd1d09",
+      "evidence": [
+        "Unique 736-byte relocation-masked match to ti_sysbios_heaps_HeapMem_Instance_init__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc148fd40",
+      "name": "Cache_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_family_c64p_Cache_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "f42a37715ab4f783980c68211ab94515",
+      "evidence": [
+        "Unique 628-byte relocation-masked match to ti_sysbios_family_c64p_Cache_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc1495b00",
+      "name": "Hwi_dispatchAlways",
+      "kind": "function",
+      "confidence": "confirmed",
+      "prefix_sha256": "ccfa69356fec323e35e09804fc24e40a",
+      "evidence": [
+        "Unique 512-byte relocation-masked match to ti_sysbios_family_c64p_Hwi_dispatchAlways in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc149c0e0",
+      "name": "Swi_runLoop",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_knl_Swi_runLoop__I(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "78d40e89e05d303394b4873abc445c72",
+      "evidence": [
+        "Unique 408-byte relocation-masked match to ti_sysbios_knl_Swi_runLoop__I in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc149d980",
+      "name": "_auto_init_elf",
+      "kind": "function",
+      "confidence": "confirmed",
+      "prefix_sha256": "0fa2327397e626c901ee8ddb4a1723d6",
+      "evidence": [
+        "Unique 384-byte relocation-masked match to _auto_init_elf in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc149de00",
+      "name": "Exception_dispatch",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_family_c64p_Exception_dispatch__E(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "6265ca485685029b5a5b0fd60129006c",
+      "evidence": [
+        "Unique 384-byte relocation-masked match to ti_sysbios_family_c64p_Exception_dispatch__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc149fcc0",
+      "name": "Hwi_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_family_c64p_Hwi_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "8430fc5124035c9531e5d6fc41b4e775",
+      "evidence": [
+        "Unique 320-byte relocation-masked match to ti_sysbios_family_c64p_Hwi_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14a0300",
+      "name": "LoggerBuf_setFilterLevel",
+      "kind": "function",
+      "prototype": "xdc_Void xdc_runtime_LoggerBuf_setFilterLevel__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Diags_Mask mask, xdc_runtime_Diags_EventLevel filterLevel)",
+      "confidence": "confirmed",
+      "prefix_sha256": "d4198fcf748abbbefd2857e5312d4912",
+      "evidence": [
+        "Unique 320-byte relocation-masked match to xdc_runtime_LoggerBuf_setFilterLevel__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14a0440",
+      "name": "Text_putLab",
+      "kind": "function",
+      "prototype": "xdc_Int xdc_runtime_Text_putLab__E(xdc_runtime_Types_Label *lab, xdc_Char **bufp, xdc_Int len)",
+      "confidence": "confirmed",
+      "prefix_sha256": "45d45f9f376c65cce56bfa2554aef751",
+      "evidence": [
+        "Unique 320-byte relocation-masked match to xdc_runtime_Text_putLab__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14a1f60",
+      "name": "LoggerBuf_getFilterLevel",
+      "kind": "function",
+      "prototype": "xdc_runtime_Diags_Mask xdc_runtime_LoggerBuf_getFilterLevel__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Diags_EventLevel level)",
+      "confidence": "confirmed",
+      "prefix_sha256": "bb8653487a4ac8a2e2a4284d78e16e06",
+      "evidence": [
+        "Unique 288-byte relocation-masked match to xdc_runtime_LoggerBuf_getFilterLevel__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14a2f80",
+      "name": "Mailbox_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_knl_Mailbox_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "f24f0c0cc44926f8d0862197ec664851",
+      "evidence": [
+        "Unique 256-byte relocation-masked match to ti_sysbios_knl_Mailbox_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14a6c80",
+      "name": "Hwi_dispatchCore",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_family_c64p_Hwi_dispatchCore__I(xdc_Int intNum)",
+      "confidence": "confirmed",
+      "prefix_sha256": "adf0af2edadb5c1e653818c9a102c56a",
+      "evidence": [
+        "Unique 192-byte relocation-masked match to ti_sysbios_family_c64p_Hwi_dispatchCore__I in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14a7040",
+      "name": "Task_exit",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_knl_Task_exit__E(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "d157845deb6fdfb3792195ee4c781d17",
+      "evidence": [
+        "Unique 192-byte relocation-masked match to ti_sysbios_knl_Task_exit__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14aa700",
+      "name": "Text_printVisFxn",
+      "kind": "function",
+      "prototype": "xdc_Bool xdc_runtime_Text_printVisFxn__I(xdc_Ptr p, xdc_CString s)",
+      "confidence": "confirmed",
+      "prefix_sha256": "e9f06682669fb8bcdb21ad89bd17d9dd",
+      "evidence": [
+        "Unique 156-byte relocation-masked match to xdc_runtime_Text_printVisFxn__I in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14afe40",
+      "name": "hal_Hwi_initStack",
+      "kind": "function",
+      "confidence": "confirmed",
+      "prefix_sha256": "958e4d2cc947275fb913cafe4dbf86f4",
+      "evidence": [
+        "Unique 128-byte relocation-masked match to ti_sysbios_hal_Hwi_initStack in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14aff40",
+      "name": "HeapMem_init",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_heaps_HeapMem_init__I(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "afdac76662f6c9a55ee8d33862f83418",
+      "evidence": [
+        "Unique 128-byte relocation-masked match to ti_sysbios_heaps_HeapMem_init__I in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14b0440",
+      "name": "LoggerBuf_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int xdc_runtime_LoggerBuf_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "7a7c41e5a0000badf9c5e9e12bc9c3a1",
+      "evidence": [
+        "Unique 116-byte relocation-masked match to xdc_runtime_LoggerBuf_Module_startup__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14b04c0",
+      "name": "LoggerBuf_filterOutEvent",
+      "kind": "function",
+      "prototype": "xdc_Bool xdc_runtime_LoggerBuf_filterOutEvent__I(xdc_runtime_Diags_Mask mask)",
+      "confidence": "confirmed",
+      "prefix_sha256": "b9d86a17563c05afc4731b287608ea56",
+      "evidence": [
+        "Unique 120-byte relocation-masked match to xdc_runtime_LoggerBuf_filterOutEvent__I in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14b46c0",
+      "name": "Clock_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_knl_Clock_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "55e9f6a3ef17cb7f8e1661e942295938",
+      "evidence": [
+        "Unique 96-byte relocation-masked match to ti_sysbios_knl_Clock_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14b48a0",
+      "name": "Swi_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_knl_Swi_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "471afe888a691512bbbbdbd53a3c8b19",
+      "evidence": [
+        "Unique 96-byte relocation-masked match to ti_sysbios_knl_Swi_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14b77a0",
+      "name": "LoggerBuf_Instance_finalize",
+      "kind": "function",
+      "prototype": "void xdc_runtime_LoggerBuf_Instance_finalize__E(xdc_runtime_LoggerBuf_Object *obj, int ec)",
+      "confidence": "probable",
+      "prefix_sha256": "4137f0330b3a431a98ea7763a5305cd3",
+      "evidence": [
+        "Unique 44-byte relocation-masked match to xdc_runtime_LoggerBuf_Instance_finalize__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc14b7820",
+      "name": "LoggerBuf_write0",
+      "kind": "function",
+      "prototype": "xdc_Void xdc_runtime_LoggerBuf_write0__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Log_Event evt, xdc_runtime_Types_ModuleId mid)",
+      "confidence": "probable",
+      "prefix_sha256": "059ae71dae371b9ec36694d111169074",
+      "evidence": [
+        "Unique 52-byte relocation-masked match to xdc_runtime_LoggerBuf_write0__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc14b7860",
+      "name": "LoggerBuf_write1",
+      "kind": "function",
+      "prototype": "xdc_Void xdc_runtime_LoggerBuf_write1__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Log_Event evt, xdc_runtime_Types_ModuleId mid, xdc_IArg a1)",
+      "confidence": "probable",
+      "prefix_sha256": "c218b06146e3231b34bbe44f0676078f",
+      "evidence": [
+        "Unique 48-byte relocation-masked match to xdc_runtime_LoggerBuf_write1__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc14b78a0",
+      "name": "LoggerBuf_write2",
+      "kind": "function",
+      "prototype": "xdc_Void xdc_runtime_LoggerBuf_write2__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Log_Event evt, xdc_runtime_Types_ModuleId mid, xdc_IArg a1, xdc_IArg a2)",
+      "confidence": "probable",
+      "prefix_sha256": "ec62ff015272fae16b9223d2cdef3843",
+      "evidence": [
+        "Unique 44-byte relocation-masked match to xdc_runtime_LoggerBuf_write2__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc14b7920",
+      "name": "SysMin_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int xdc_runtime_SysMin_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "5c7546b7904151eccce8f3f2d5163d1f",
+      "evidence": [
+        "Unique 64-byte relocation-masked match to xdc_runtime_SysMin_Module_startup__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc14be480",
+      "name": "Text_ropeText",
+      "kind": "function",
+      "prototype": "xdc_CString xdc_runtime_Text_ropeText__E(xdc_runtime_Text_RopeId rope)",
+      "confidence": "probable",
+      "prefix_sha256": "27c9c5315c516482651e449e341ad6a5",
+      "evidence": [
+        "Unique 32-byte relocation-masked match to xdc_runtime_Text_ropeText__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc1494ce0",
+      "name": "Timer_setPeriodMicroSecs",
+      "kind": "function",
+      "prototype": "xdc_Bool ti_sysbios_timers_timer64_Timer_setPeriodMicroSecs__E(ti_sysbios_timers_timer64_Timer_Handle __inst, xdc_UInt32 microsecs)",
+      "confidence": "confirmed",
+      "prefix_sha256": "83c17e20cb69ed3bb8f7d8e8cd7748c1",
+      "evidence": [
+        "Unique 544-byte relocation-masked match to ti_sysbios_timers_timer64_Timer_setPeriodMicroSecs__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Overrides a func_match carry at 0xc1495100 (speculative; strings, body similarity 0.432), which is not an exact match."
+      ]
+    }
+  ]
+}

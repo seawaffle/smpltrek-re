@@ -1,0 +1,634 @@
+[
+  {
+    "source": "firmware/smpltrek/SmplTrek v1.0.65.zip:SmplTrek v1.0.65/SmplTrek.bin",
+    "sha256": "c276d80838f333070128050216ad89971cd5454aac72921ad2348be00235ba71",
+    "size": 26827227,
+    "profile": "smpltrek",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 26827227,
+        "stored": "deb198e7",
+        "computed": "deb198e7",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 25092330,
+        "stored": "17501ea5",
+        "computed": "17501ea5",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 25092402,
+        "size": 1734825,
+        "stored": "eab20ee7",
+        "computed": "eab20ee7",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/smpltrek/SmplTrek v1.1.72.zip:SmplTrek v1.1.72/SmplTrek.bin",
+    "sha256": "e4ff66b6f3ba2c6e8e9036d6f4b6e13330f4701071ac06c084eaa64766794a3c",
+    "size": 26830955,
+    "profile": "smpltrek",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 26830955,
+        "stored": "a2ca62b2",
+        "computed": "a2ca62b2",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 25092330,
+        "stored": "17501ea5",
+        "computed": "17501ea5",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 25092402,
+        "size": 1738553,
+        "stored": "3040ec1f",
+        "computed": "3040ec1f",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/smpltrek/SmplTrek v1.2.86.zip:SmplTrek v1.2.86/SmplTrek.bin",
+    "sha256": "c94dbda9fe434d387cc8a6a245db267ec9ded5675f49dab420faae91852d8d25",
+    "size": 26872091,
+    "profile": "smpltrek",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 26872091,
+        "stored": "aeb0a623",
+        "computed": "aeb0a623",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 25092330,
+        "stored": "17501ea5",
+        "computed": "17501ea5",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 25092402,
+        "size": 1779689,
+        "stored": "6a1a0ef5",
+        "computed": "6a1a0ef5",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/smpltrek/SmplTrek v1.3.90.zip:SmplTrek v1.3.90/SmplTrek.bin",
+    "sha256": "29ae7394f86fcd439ff0f3bba5bbd11cf2d58b60c90a3277f25415cbe1c0523a",
+    "size": 26875635,
+    "profile": "smpltrek",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 26875635,
+        "stored": "1d9f6a14",
+        "computed": "1d9f6a14",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 25092330,
+        "stored": "17501ea5",
+        "computed": "17501ea5",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 25092402,
+        "size": 1783233,
+        "stored": "231d1d3d",
+        "computed": "231d1d3d",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/smpltrek/SmplTrek v1.4.99.zip:SmplTrek v1.4.99/SmplTrek.bin",
+    "sha256": "8d8ab67cb043d8602bd0e8d30a61922e65e53e3040ef64cd3c90c4ff016a6037",
+    "size": 26902291,
+    "profile": "smpltrek",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 26902291,
+        "stored": "ffb2843d",
+        "computed": "ffb2843d",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 25092330,
+        "stored": "17501ea5",
+        "computed": "17501ea5",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 25092402,
+        "size": 1809889,
+        "stored": "3f211306",
+        "computed": "3f211306",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/smpltrek/SmplTrek v2.0.129.zip:SmplTrek v2.0.129/SmplTrek.bin",
+    "sha256": "df0e1520e4132fa74baa22b4315ffdab598ed4c9065a9d8189ed4bb96f1fbb40",
+    "size": 28904111,
+    "profile": "smpltrek",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 28904111,
+        "stored": "5e8e8bb1",
+        "computed": "5e8e8bb1",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 26959274,
+        "stored": "ca1d0801",
+        "computed": "ca1d0801",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 26959346,
+        "size": 1944765,
+        "stored": "d0d66c3a",
+        "computed": "d0d66c3a",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/smpltrek/SmplTrek v3.0.148.zip:SmplTrek v3.0.148/SmplTrek.bin",
+    "sha256": "098bdaccd0c9c3276d121238d2876570e0f1e8613b34309c36f182bfb8fb47ba",
+    "size": 1916141,
+    "profile": "smpltrek",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 1916141,
+        "stored": "e2110138",
+        "computed": "e2110138",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 1916093,
+        "stored": "f8868dda",
+        "computed": "f8868dda",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/smpltrek/SmplTrek v3.2.174.zip:SmplTrek v3.2.174/SmplTrek.bin",
+    "sha256": "3b6848b0f041bcf23c73d4b0357d2f3d6dc9e7e03752b32ff7322e91e6814e53",
+    "size": 1953681,
+    "profile": "smpltrek",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 1953681,
+        "stored": "7d5cfb11",
+        "computed": "7d5cfb11",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 1953633,
+        "stored": "939ce727",
+        "computed": "939ce727",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/lofi12/Lofi-12XT_v1.1.156.zip:Lofi-12XT_v1.1.156/Lofi-12 XT.bin",
+    "sha256": "617c3efea92399b0e3ed40890dd67a75013b0132059fa713076cae68a1908ac5",
+    "size": 1595605,
+    "profile": "lofi12",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 1595605,
+        "stored": "f58af539",
+        "computed": "f58af539",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 1595557,
+        "stored": "2013256e",
+        "computed": "2013256e",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/lofi12/Lofi-12XT_v1.2.179.zip:Lofi-12XT_v1.2.179/Lofi-12 XT.bin",
+    "sha256": "30ea9eeb58cfeb2cddc68f1b15f65f2586d6956df27009eb9045ca78b616a212",
+    "size": 1606197,
+    "profile": "lofi12",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 1606197,
+        "stored": "dff0d8c2",
+        "computed": "dff0d8c2",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 1606149,
+        "stored": "04e4b64e",
+        "computed": "04e4b64e",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/lofi12/Lofi-12XT_v1.5.205.zip:Lofi-12XT_v1.5.205/Lofi-12 XT.bin",
+    "sha256": "a8bffa65919c0a2d4ff2ce77d16301551af4d2964497b8804deed49ce4198026",
+    "size": 1707049,
+    "profile": "lofi12",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 1707049,
+        "stored": "b17c0857",
+        "computed": "b17c0857",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 1707001,
+        "stored": "4ff8bce8",
+        "computed": "4ff8bce8",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/ELZ_1_play_V3_1_149.zip:ELZ_1_play_V3_1_149/ELZ_1 play.bin",
+    "sha256": "d16aa0f1e1bea1f7f128e7540e004f53a3712b1075ff347d7d28db99e6069e47",
+    "size": 10523193,
+    "profile": "elz1play",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 10523193,
+        "stored": "cb77e19f",
+        "computed": "cb77e19f",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 6614200,
+        "stored": "c4fd75c1",
+        "computed": "c4fd75c1",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 6614272,
+        "size": 3908921,
+        "stored": "bbf32272",
+        "computed": "bbf32272",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/ELZ_1_play_v1_1_62.zip:ELZ_1_play_v1_1_62/ELZ_1 play.bin",
+    "sha256": "c2a22f4091d0a2c97d4262bb07d5fc05cb2ef94f3f95b1c43416ee17fb564aaa",
+    "size": 10233121,
+    "profile": "elz1play",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 10233121,
+        "stored": "aa22c5ed",
+        "computed": "aa22c5ed",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 6396324,
+        "stored": "7779b716",
+        "computed": "7779b716",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 6396396,
+        "size": 3836725,
+        "stored": "5fc3c52f",
+        "computed": "5fc3c52f",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/ELZ_1_play_v2_0_109.zip:ELZ_1_play_v2_0_109/ELZ_1 play.bin",
+    "sha256": "f8a5c8965ddd2640ce6b167cb8cddc69fe131d7c0c793f72a54cfbbc892c01e4",
+    "size": 10412777,
+    "profile": "elz1play",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 10412777,
+        "stored": "a8ee9601",
+        "computed": "a8ee9601",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 6583292,
+        "stored": "37a74ac9",
+        "computed": "37a74ac9",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 6583364,
+        "size": 3829413,
+        "stored": "172ba121",
+        "computed": "172ba121",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/LIVEN_8SYSTEM_1_1_62.syx",
+    "sha256": "af574b3a26fd4ca1bd08ef761207c9ce689eb6e7f770a3bd6902d169fea32a5a",
+    "size": 572437,
+    "profile": "liven8bit",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 572437,
+        "stored": "caef914c",
+        "computed": "caef914c",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 572389,
+        "stored": "528e8341",
+        "computed": "528e8341",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/LIVEN_8SYSTEM_2_0_67.syx",
+    "sha256": "dd3ad1871b95df17924987d495c26dad74ceb9f0e615245d9fb3cc3c3d7a700b",
+    "size": 575397,
+    "profile": "liven8bit",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 575397,
+        "stored": "04d23358",
+        "computed": "04d23358",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 575349,
+        "stored": "20a119e6",
+        "computed": "20a119e6",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/LIVEN_8SYSTEM_3_0_76.syx",
+    "sha256": "06afc0afb9a96d27502aaa65c066431b4de5f5c9bf0c7e2be3789c1d55d7ddfc",
+    "size": 1084301,
+    "profile": "liven8bit",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 1084301,
+        "stored": "d8a40ec3",
+        "computed": "d8a40ec3",
+        "matches": true
+      },
+      {
+        "tag": "pmtd",
+        "offset": 72,
+        "size": 463168,
+        "stored": "ce8f4616",
+        "computed": "ce8f4616",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 463240,
+        "size": 621061,
+        "stored": "f1c4c7a7",
+        "computed": "f1c4c7a7",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/LIVEN_LOFI_SYSTEM.syx",
+    "sha256": "24ba99d649de424155e095cd6110ce62f0488c88987d23a724127e473dc2bfed",
+    "size": 831125,
+    "profile": "livenlofi12",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 831125,
+        "stored": "0699d016",
+        "computed": "0699d016",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 831077,
+        "stored": "b0dfdb58",
+        "computed": "b0dfdb58",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/LIVEN_LOFI_SYSTEM_2_1_65.syx",
+    "sha256": "0c0100554c211ca76cc1a88329bb2a05f3bb6c70cfa080966c553743433f1b62",
+    "size": 848909,
+    "profile": "livenlofi12",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 848909,
+        "stored": "6bd298dc",
+        "computed": "6bd298dc",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 848861,
+        "stored": "1850f754",
+        "computed": "1850f754",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/LIVEN_XFM_SYSTEM_2_0_43.syx",
+    "sha256": "61a28527a64dcc0e5d31a81a6267b43e588489bac2217a825ee58c3c501cbd9a",
+    "size": 994961,
+    "profile": "livenxfm",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 994961,
+        "stored": "2fe9330d",
+        "computed": "2fe9330d",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 994913,
+        "stored": "87edabeb",
+        "computed": "87edabeb",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/other/LIVEN_XFM_SYSTEM_3_0_46.syx",
+    "sha256": "dac255077746bbeea05b3da6e2ffaccca70c54132d9692169212750a5e155a51",
+    "size": 996529,
+    "profile": "livenxfm",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 996529,
+        "stored": "efaad03b",
+        "computed": "efaad03b",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 996481,
+        "stored": "e1b63d36",
+        "computed": "e1b63d36",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/cydrums/CyDrums_v1.1.84.zip:CyDrums_v1.1.84/CyDrums.bin",
+    "sha256": "e297d23e98b336d40d3e7445a3c98cf4434e9122824793833970cbba0b6e2155",
+    "size": 2271021,
+    "profile": "cydrums",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 2271021,
+        "stored": "374e33f1",
+        "computed": "374e33f1",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 2270973,
+        "stored": "92626210",
+        "computed": "92626210",
+        "matches": true
+      }
+    ]
+  },
+  {
+    "source": "firmware/cydrums/CyDrums_v2.0.97beta.zip:CyDrums_v2.0.97beta/CyDrums.bin",
+    "sha256": "e32d4739e135aa80085f3bf0dc072a04bd3f40d3411bb9eeaed4def073deb3de",
+    "size": 2389189,
+    "profile": "cydrums",
+    "checks": [
+      {
+        "tag": "cmtd",
+        "offset": 0,
+        "size": 2389189,
+        "stored": "9cf3149a",
+        "computed": "9cf3149a",
+        "matches": true
+      },
+      {
+        "tag": "mmtd",
+        "offset": 48,
+        "size": 2389141,
+        "stored": "0c8a3721",
+        "computed": "0c8a3721",
+        "matches": true
+      }
+    ]
+  }
+]

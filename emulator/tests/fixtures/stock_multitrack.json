@@ -1,0 +1,116 @@
+{
+  "build": {
+    "config": {
+      "bytes": 1396364,
+      "sha256": "5f2d44a8da6bb719d92c2003674683b5fd627da92292cac5eea099e2c85e9adb"
+    },
+    "cycles": 16155216000,
+    "fault": null,
+    "frames": [
+      {
+        "label": "drum-1",
+        "sha256": "25b717ddb239fa6879b387879eb2349fd33992d4dc01f6aae3266404d8209eb0"
+      },
+      {
+        "label": "drum-2",
+        "sha256": "e04e70a13daaeb41844550b9c73fd655155ee8b802be3b661254bf00c7cb94b7"
+      },
+      {
+        "label": "inst",
+        "sha256": "f13699db025df5a5fb645645f1de1a21b8fd4d7404be6ce71cc7133326649b3d"
+      },
+      {
+        "label": "midi",
+        "sha256": "50a094420abbb3211eb5fcbd1dc9215135e03df527894595a77b7d44db2f5d97"
+      },
+      {
+        "label": "loop",
+        "sha256": "ca48cde10761d84c2bb29f7aae8409b968316e4babbae747eb435712f0ddd756"
+      },
+      {
+        "label": "shot",
+        "sha256": "f9ca7dc7ac140453b16c0de28e50afffa2704a8af16cf412421ab290ca4b687c"
+      },
+      {
+        "label": "saved",
+        "sha256": "f9ca7dc7ac140453b16c0de28e50afffa2704a8af16cf412421ab290ca4b687c"
+      }
+    ],
+    "sd": {
+      "bytes_read": 5755464,
+      "bytes_written": 1439232
+    }
+  },
+  "play": {
+    "audio_sha256": "ba31a0c062d09c5fe55530840268bd1d27950c71a45706c1e3dd2f77745bfa00",
+    "cycles": 4932720000,
+    "fault": null,
+    "frames": [
+      {
+        "label": "loaded",
+        "sha256": "6a13a0280476eab37f5aff5059c77a210afbb14e80491981a01916f81514f793"
+      },
+      {
+        "label": "playing-1s",
+        "sha256": "31681350d70b08da208e68e107516a54fc3f081a68142dc50c11603fc11a2630"
+      },
+      {
+        "label": "playing-2s",
+        "sha256": "fe17fc391459b7219bfe55f54af59fafc2b7374e9fa6effa5bc4f875d21b0856"
+      },
+      {
+        "label": "playing-3s",
+        "sha256": "0ddce1610f0d0635c122439f03b471799d46f8bbedd0a7e5297730a7e83e9b85"
+      },
+      {
+        "label": "playing-4s",
+        "sha256": "0251909bb03f7e8011c852651984731368b442c350ca41482d5cd2d8a2944120"
+      },
+      {
+        "label": "playing-5s",
+        "sha256": "1de7526f8617bc33a9bea3d40361fae75fd12bc51e714351db41d10a55160262"
+      },
+      {
+        "label": "playing-6s",
+        "sha256": "31ac1cb91b73e36c4fd2f418f7af753884983a9815d792c98460f9202fa515e4"
+      }
+    ],
+    "rms": 0.089897,
+    "sd": {
+      "bytes_read": 3487816,
+      "bytes_written": 0
+    },
+    "underruns": 0
+  },
+  "pool_loader": {
+    "cycles": 3958080000,
+    "fault": null,
+    "frames": [
+      {
+        "label": "after-ok",
+        "sha256": "8fef8a0d706dd386aecfd5217e46d06b40fe5f05b1cea59db06bca77a6360626"
+      }
+    ],
+    "low_reads": [
+      [
+        3244385952,
+        12,
+        4,
+        0
+      ]
+    ],
+    "sd": {
+      "bytes_read": 497736,
+      "bytes_written": 19456
+    }
+  },
+  "pool_ok": {
+    "cycles": 3744993543,
+    "fault": "unmapped or disallowed memory access at 0x0000000c: ldw .D1T1 *+a3(4),a0 (PC 0xc16166a0, cycle 3744993543)",
+    "frames": [],
+    "sd": {
+      "bytes_read": 255048,
+      "bytes_written": 19456
+    }
+  }
+}

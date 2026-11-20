@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel · stock firmware</title>
+  <link rel="stylesheet" href="/stock.css">
+  <script src="/stock.js" defer></script>
+</head>
+<body>
+  <div id="error" role="alert" hidden></div>
+  <main>
+    <section class="stage">
+      <div id="panel" class="panel" aria-label="Virtual panel">
+        <div class="screen-well"><canvas id="screen" width="128" height="128" role="img" aria-label="128 by 128 grayscale display"></canvas></div>
+        <div id="fixed"></div>
+        <div id="encoders"></div>
+        <div id="steps"></div>
+        <div id="pads"></div>
+      </div>
+    </section>
+    <aside>
+      <section class="card">
+        <div class="session-status"><strong id="status">Connecting</strong><span id="conditional" class="badge warn" hidden title="Stores to reserved low memory are assumed harmless, and reads of it are assumed to return the previous load's data, so that stock start-up and sample loading complete. Run with --strict to keep them as faults.">CONDITIONAL BOOT</span></div>
+        <div class="actions"><button id="audio" class="primary">Enable audio</button><button id="pause">Pause</button><button id="power">Power key</button></div>
+        <label class="row">Volume <input id="volume" type="range" min="0" max="800" value="200"><output id="volume-value">2.0×</output></label>
+        <label class="row">Panel labels <select id="labels"><option value="generic">Generic</option><option value="sampler">Sampler</option><option value="lofi">Lo-fi sampler</option><option value="drum">Drum synth</option></select></label>
+        <label class="row">Pad pressure <input id="pressure" type="range" min="900" max="16383" value="9000"><output id="pressure-value">9000</output></label>
+        <div class="actions"><button id="save">Save card &amp; flash</button><a class="button" href="/api/frame.png" download="frame.png">Save display</a></div>
+        <p id="notice" class="hint" aria-live="polite"></p>
+        <p class="hint">Drag a knob up or down, or use the mouse wheel, to turn it; click it to push. Shift-click a button to latch it for combinations. The VOL knob and the speaker grille control this page's sound.</p>
+      </section>
+      <details class="card" open>
+        <summary>Emulation</summary>
+        <div class="metrics"><span>Speed <strong id="rate">–</strong></span><span>Audio buffer <strong id="buffer">off</strong></span><span>Underruns <strong id="underruns">0</strong></span></div>
+        <p id="clock" class="hint">0.0 s guest</p>
+        <label class="row check"><input id="swap" type="checkbox"> Swap left and right</label>
+      </details>
+      <details class="card">
+        <summary>Keyboard</summary>
+        <p class="hint keys-help">Arrows move · Enter OK · Backspace CLR · function keys by position: F F1 · R F2 · P F3 · H F4 · Space F5 · S F6 · M F7 · E F8 · 1–8 steps, with Shift 9–16 · pads Z X C V B / A D G J K / Q W T Y U are PAD 0 to 14 · [ ] VALUE</p>
+      </details>
+      <details class="card">
+        <summary>Power source</summary>
+        <label class="row">Battery channel <input id="battery" type="range" min="0" max="16383" value="12000"><output id="battery-value">not sent</output></label>
+        <p class="hint" id="battery-hint">The panel MCU is silent until you move this: stock then receives analogue channel 15.</p>
+      </details>
+      <details class="card">
+        <summary>Panel LED addresses <span class="dim">a × 48 + b × 8 + c</span></summary>
+        <div id="leds" class="leds"></div>
+        <p class="hint">Raw values stock sends to the panel MCU. Hover for the address and the control it lights.</p>
+      </details>
+      <details class="card">
+        <summary>Notes</summary>
+        <p class="hint">128 × 128 display, 16 gray levels, 48 kHz audio. Unmodified stock firmware on the compiled core; inputs are switch, encoder and panel-UART signals only.</p>
+        <p class="hint">Button positions follow the stock test page's switch map and the LED table in <code>analysis/led_table.py</code>. Not checked against a device: which pad is which analogue channel (assumed to follow the pad LED numbering) and the left/right audio routing. The two input-gain knobs and the microphone gain are drawn but not emulated.</p>
+      </details>
+    </aside>
+  </main>
+</body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "format": "sonicware-sterilised-lofi/1",
+  "source": {
+    "sha256": "a8bffa65919c0a2d4ff2ce77d16301551af4d2964497b8804deed49ce4198026",
+    "length": 1707049,
+    "product": "Lofi-12 XT",
+    "version": "1.5.205"
+  },
+  "entry": {
+    "address": "0xc2c8b0f8",
+    "name": "settings_save",
+    "stub": "mvk .L1 0,a4; bnop .S2 b3,5"
+  },
+  "replacements": [
+    {
+      "offset": 8,
+      "old_hex": "57087cb1",
+      "new_hex": "e0d7ea56",
+      "reason": "cmtd CRC"
+    },
+    {
+      "offset": 16,
+      "old_hex": "0c000000",
+      "new_hex": "05000000",
+      "reason": "family word Lofi-12 XT -> SmplTrek"
+    },
+    {
+      "offset": 56,
+      "old_hex": "e8bcf84f",
+      "new_hex": "3a2c6b98",
+      "reason": "mmtd CRC"
+    },
+    {
+      "offset": 1178308,
+      "old_hex": "f7367795",
+      "new_hex": "2606efa1",
+      "reason": "settings_save entry: mvk .L1 0,a4; bnop .S2 b3,5"
+    }
+  ],
+  "output": {
+    "sha256": "67d8a6b07f84b32ab987a4dc07bb0def5370c0074d95d0128724d13f4c7ea2fb",
+    "length": 1707049,
+    "profile": "smpltrek",
+    "family_word": 5
+  }
+}

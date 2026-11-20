@@ -1,0 +1,959 @@
+{
+  "format": "smpltrek-claims/1",
+  "updated": "2026-11-20",
+  "scope": "All device-level claims come from ONE unit, bootloader v1.0.17, unless noted. Seeds, checks and bootloader behaviour may differ on other units or bootloader versions.",
+  "statuses": {
+    "observed-device": "Seen on hardware; evidence pinned (photo, transcript, or recorded artifact hash plus the operator's observation).",
+    "observed-file": "Verified directly against files in firmware/ (parse, CRC, diff).",
+    "deduced": "Follows logically from observed-device/file results; no direct observation.",
+    "inferred-static": "Derived from disassembly/static analysis only; not device-verified.",
+    "fitted": "Parameter chosen to fit available samples exactly; unvalidated until a second independent sample agrees.",
+    "open": "Not established; possibly not investigated.",
+    "superseded": "Shown wrong or replaced by later evidence; kept for history. The notes name the claim that replaces it."
+  },
+  "claims": [
+    {
+      "id": "INT-1",
+      "area": "container",
+      "claim": "Update .bin = 'cmtd' container: 24-byte header (magic, size, CRC, zero word, family word, descriptor count) + N 24-byte descriptors (type, version triplet, file offset, length); type 2 = pmtd content, type 3 = mmtd system; images are contiguous and exhaust the file.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": ["tools/sonicware_integrity.py parse", "docs/12-update-container.md 'cmtd container'", "all 14 modern files in firmware/"]
+    },
+    {
+      "id": "INT-2",
+      "area": "integrity",
+      "claim": "Every integrity field is IEEE CRC-32 (zlib convention) over the whole image including header, with only its own checksum word zeroed, seeded by a constant per (product family, image type).",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["56/56 fields across 23 releases of seven products, every field matching (tools/verified_corpus.json, checked against the files by tools/test_integrity.py)", "C1 rejection of a 1-bit CRC flip", "resealed CUSTOM INFO accepted and running", "SYSTEM DIAG accepted the resealed installed image", "W1 rewrapped acceptance"],
+      "notes": "Device-level proof is specific to the SmplTrek profile; the file-level fit covers Lofi-12 XT too. The SmplTrek bootloader (BOOT 1.0.17) computes the equivalent form: zlib CRC-32 from 0 with the field replaced by a constant from code (cmtd 0xF2970822, pmtd 0xB02C53FD, mmtd 0x88E83CEB, bmtd 0xE255264C); all 22 SmplTrek images and the dump's BOOT image match (tools/test_integrity.py, docs/05-bootloader.md)."
+    },
+    {
+      "id": "INT-3",
+      "area": "integrity",
+      "claim": "Cross-validated seeds (each recovered identically from every listed release): SmplTrek cmtd/pmtd/mmtd (8 releases), Lofi-12 XT cmtd/mmtd (3), CyDrums cmtd/mmtd (2), ELZ_1 play (3), Liven 8bit warps (3; pmtd from one release), Liven Lofi-12 (2), Liven XFM (2).",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": ["tools/verified_corpus.json (23 files, 56 fields)", "tools/sonicware_integrity.py verify per profile", "docs/12-update-container.md 'Seeds per product'"]
+    },
+    {
+      "id": "INT-4",
+      "area": "integrity",
+      "claim": "The MINIMAL 1.0.58, Liven Bass&Beats 1.1.27, Liven Mega Synthesis 1.1.37 and Liven Ambient Ø 1.5.45 seeds are single-release fits, exact by construction only. The CyDrums seeds (1.1.84, 2.0.97 beta) and ELZ_1 play seeds (three releases) were first fitted the same way and are now cross-validated (INT-3).",
+      "status": "fitted",
+      "confidence": "low-until-second-sample",
+      "evidence": ["docs/12-update-container.md 'Seeds per product'"],
+      "notes": "CyDrums 2.0.97 beta (2026-11-18) recovers the same cmtd 0x9763BE13 and mmtd 0x2C577CBB as 1.1.84, so tools/sonicware_integrity.py has a cydrums profile and both releases are in tools/verified_corpus.json. The single-release seeds are listed in docs/12-update-container.md and offered as no profile. None of them matter for running another product's firmware on a SmplTrek (the rewrap uses SmplTrek seeds); they matter only for checking files meant for those devices."
+    },
+    {
+      "id": "INT-5",
+      "area": "bootloader",
+      "claim": "Before the confirmation prompt, the bootloader checks only: family word matches the device, and outer cmtd CRC verifies. A corrupt inner mmtd CRC does not block reaching the prompt.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["C1 rejected (outer CRC bit flip)", "C2 accepted to prompt (inner CRC bad)", "A2a/A2b rejected (family word 12)", "W1 accepted (family 5 + resealed)", "experiments/README.md Step 2"]
+    },
+    {
+      "id": "INT-6",
+      "area": "bootloader",
+      "claim": "Seeds are selected on the device side, not keyed from the file's family word.",
+      "status": "deduced",
+      "confidence": "high",
+      "evidence": ["A2b (family 12 + Lofi seeds) was rejected; had seeds been file-keyed it would have passed", "W1 (family 5 + SmplTrek seeds around a Lofi payload) accepted"],
+      "notes": "Residual ambiguity (device-family check vs seed table with only own family) has no practical effect."
+    },
+    {
+      "id": "INT-7",
+      "area": "bootloader",
+      "claim": "After OK, no writer checks the file's inner CRC before erasing: a SYSTEM image with a bad inner CRC is erased-and-written in full, fails the post-write CRC recomputation, and never gets its install marker, so normal boot refuses it (the old system is gone; bootloader and HOME + power remain). NORMAL boot does not check the installed system image's CRC: it requires only the 'mmtd' magic and bit 0 of header +12 clear (the install marker), then loads the 'sect' sections and branches to the entry point.",
+      "status": "inferred-static",
+      "confidence": null,
+      "evidence": ["C2 was CLR'd at the prompt by protocol", "SYSTEM DIAG does validate installed images (observed)", "static, BOOT 1.0.17: BootLoader slot 1 (0xC7094E40) reads flash 0x40000 and calls no CRC routine; the CRC routine's callers are the update file check, the updater's post-write checks and SystemVerify (docs/05-bootloader.md)"],
+      "notes": "Both halves from the BOOT 1.0.17 disassembly (2026-11-11), not device-tested; see docs/05-bootloader.md 'Writing'. Practical rule unchanged: always reseal every CRC."
+    },
+    {
+      "id": "INT-11",
+      "area": "bootloader",
+      "claim": "Each SPI-flash section is written as erase -> program -> post-write CRC recomputation from flash -> program 0xFFFFFFFE over header +12 (SYSTEM 0x4000C, PRESET 0x44000C, BOOT 0x3FFF0). 'Verifying' recomputes the CRC; it does not compare with the file. BOOT, PRESET, MCU and MCU Boot sections are written only when strictly newer than the installed version (or nothing is installed); SYSTEM is always written.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["BOOT 1.0.17: writers 0xC7085F74 / 0xC7085AB4 / 0xC7085E10, marker write 0xC7085A94 with the copy-table-initialised word 0xC70AD8C4 = 0xFFFFFFFE, check 0xC708D410", "version compare loop 0xC7090864 (unsigned, major/minor/build)", "installed images in the A4 dump carry 0xFFFFFFFE at +12 and their CRC matches with +12 restored to 0xFFFFFFFF", "device 2026-11-11 (session D1): official SYSTEM 3.0.148 written over 3.2.174 and booted (SYSTEM INFO 3.0.148, BOOT/PRESET/MCU unchanged, BOOT MODE DIAG all OK); 3.2.174 written back (confirmation V3.0.148 -> V3.2.174); photographed"],
+      "notes": "docs/05-bootloader.md, 'Writing'. Status stays inferred-static for the claim as a whole: SYSTEM being written on a downgrade and on the upgrade back is observed on the device (D1), but the write order, the marker and the strictly-newer rule for BOOT/PRESET/MCU are read from code only."
+    },
+    {
+      "id": "INT-12",
+      "area": "bootloader",
+      "claim": "The boot area (flash 0..0x40000) is write-protected by the flash's block-protect bits; the bootloader clears them only around a BOOT section write and re-applies them (status BP=0011, configuration bit 3) after it and on every BOOT MODE entry.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": ["BOOT 1.0.17: 0xC7095110 (status & 0xC3), 0xC70952CC (set), 0xC7095394 (check at BOOT MODE entry); flash commands 0x05, 0x15, 0x01"],
+      "notes": "That BP=0011 + TB covers exactly 256 KiB assumes a 128 Mbit Macronix part (0x15 read-configuration convention). 2026-11-17: both devices answer 9F with C2 20 18 (Macronix, 128 Mbit) and device 0 reads BP = 0011, TB = 1 (HW-54); the exact part suffix is not known. The SYSTEM and content areas are not protected by this."
+    },
+    {
+      "id": "INT-8",
+      "area": "bootloader",
+      "claim": "The update path (HOME at power-on) is reachable regardless of application state.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["BOOT MODE menu appears without app splash on every observed boot", "device, C3 2026-11-11: BOOT MODE reached by HOME + power with a foreign (Lofi-12 XT) app installed; that app booted normally (the hung-app case is D0, below)", "static, BOOT 1.0.17: BootDelegate slot 3 (0xC7089F44) tests switch bit 27 (HOME) before it reads the system image, so the choice is made before any app code is loaded (docs/05-bootloader.md)", "device, D0 2026-11-12 (experiments/sessions/D0-hang-recovery.md): the 16 KiB hang image (SYSTEM 0.0.1, one instruction branching to itself, no Sonicware code) was installed (confirmation V3.2.174 -> V0.0.1, photographed) and jumped into (unit frozen on the bootloader's logo, power key dead); after unplugging, HOME + power reached BOOT MODE at the first try; DIAG SYSTEM v0.0.1 OK (photographed); official 3.2.174 restored (photographed)"],
+      "notes": "Load-bearing for cross-flash (a foreign app is what normal boot runs) and for running bare-metal test images. Observed with a foreign app that booted (C3, 2026-11-11) and with an app that never runs (D0, 2026-11-12)."
+    },
+    {
+      "id": "INT-9",
+      "area": "bootloader",
+      "claim": "No current-layout public update file (SmplTrek, Lofi-12 XT, CyDrums, ELZ_1 play, MINIMAL, Liven) carries BOOT or MCU images: their descriptors are only type 2, pmtd content, and type 3, mmtd system. bmtd is the bootloader's own tag. The one exception in any layout is the legacy ELZ_1 v6.0, which ships a BOOT image (INT-15); no file carries MCU images.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": ["all firmware/ parsed", "app version-string getters reference pmtd/mmtd/bmtd headers in RAM", "static, BOOT 1.0.17: the container parser accepts kinds 1 BOOT, 2 PRESET, 3 SYSTEM, 4 MCU, 5 MCU Boot (jump table 0xC70ADA74; labels from the confirmation screen); kinds 4/5 go to RomHandlerMCU (docs/05-bootloader.md)"],
+      "notes": "2026-11-12: the generalisation beyond the SmplTrek has one exception, the legacy ELZ_1 v6.0 bootloader image (INT-15)."
+    },
+    {
+      "id": "INT-10",
+      "area": "hardware",
+      "claim": "SYSTEM DIAG checks a panel-MCU image (MCU v1.0.6), but the DSP's SPI flash holds no separate MCU image, and no plain Cortex-M image is embedded anywhere in it (boot data included; a compressed or encrypted copy inside the boot data is not excluded).",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["photographed DIAG screen (MCU v1.0.6 checked)", "A4 dump SHA-256 3767d6ad...e4c8d5: every non-erased byte is the boot AIS image, the bmtd/mmtd/pmtd images, the 5 content partitions, a stale 1.x PDSN span or the two settings sectors (analysis/flash_map.py); no Cortex-M vector table anywhere (docs/01-platform-map.md, 'SPI flash layout')"],
+      "notes": "Corrected 2026-11-11: until the dump this claim said the MCU firmware was a fourth image in the SPI flash. Where the checked MCU image lives and how DIAG checks it are open. The boot loader has RomHandlerMCU and SystemUpdater::updateMCUSection / updateMCUBootSection (strings), so inference: the MCU's own flash, queried over the panel link. Static, BOOT 1.0.17 (2026-11-11): DIAG's MCU check sends the byte 0x93 on the panel UART and waits for reply 12; RomHandlerMCU programs the MCU with framed erase/program commands and its read slot is a stub, so the bootloader cannot read MCU flash back (docs/05-bootloader.md)."
+    },
+    {
+      "id": "HW-1",
+      "area": "hardware",
+      "claim": "TMS320C6748 DSP, DDR2 at 0xC0000000, two 16 MiB SPI NOR devices presented by the driver as one 32 MiB space (device 1 for addresses >= 0x01000000).",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["C674x fetch-packet signature test (tools/sonicware_triage.py)", "HAL::FlashMemoryDriver select-device routine 0xC15DFE68", "teardown photos (not published)"],
+      "notes": "Chip marking (C6748 vs C6746/42) per Reddit teardown only. 2026-11-18: the code needs at least a C6746 (USB0, MMC/SD0, SPI0, UART1/2, I2C1) and nothing in it needs a C6748 over a C6746 (INT-16). 2026-11-17: the flash half is observed on this unit (HW-54: both devices answer 9F with C2 20 18, 128 Mbit each); the status stays inferred-static for the DSP part, whose marking on this unit is not seen."
+    },
+    {
+      "id": "HW-2",
+      "area": "settings",
+      "claim": "Apps write flash only through one shared helper pair to the top two 4 KiB sectors (0x01FFF000, 0x01FFE000): two settings blocks tagged 'PREF' and 'PREX'; tags are shared across products, layouts are not; readers validate the 4-byte tag only and rely on per-field clamps.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["static reading of the app's flash writers and settings reader, 2026-11-09 (now docs/01-platform-map.md 'Flash use by the app' and 'Settings block')", "same tags located in Lofi and CyDrums images"],
+      "notes": "A foreign app would overwrite these blocks (why the C3 image was sterilised). 2026-11-10 (docs/01-platform-map.md 'Settings block', 'Flash use by the app'): holds for CyDrums 1.1.84 too. Only SmplTrek's validator reads the PREX half; Lofi-12 XT and CyDrums copy PREF (404 / 376 bytes from block+0, tag included) and reset PREX to defaults on every boot. The writer is the same structure with the same flash addresses, not byte-identical (region_diff). 2026-11-10 writer read: settings_save writes nothing unless settings_changed reports a difference from the shadow copies; per sector it erases 4 KiB, then writes each half as struct bytes 4..len-1, read-back compare, then the 4-byte tag last; the rest of each half stays 0xFF. Halves written: PREF 284 / 404 / 376 bytes, PREX 372 / 380 / 380 (SmplTrek / Lofi-12 XT / CyDrums)."
+    },
+    {
+      "id": "HW-3",
+      "area": "hardware",
+      "claim": "The bootloader never starts USB (no enumeration in BOOT MODE or on the SYSTEM UPDATE screen); SD card is the only update channel.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["experiments/README.md 'USB check result' with control enumeration of the app"],
+      "notes": "Single unit, BOOT 1.0.17."
+    },
+    {
+      "id": "HW-4",
+      "area": "hardware",
+      "claim": "CN202 (2x7 SMD pads, CPU mezzanine) is a JTAG footprint.",
+      "status": "open",
+      "confidence": "low",
+      "evidence": ["geometry matches TI 14-pin JTAG; no continuity, silkscreen or probe test"],
+      "notes": "Deliberately out of scope (no probe tools at hand); a repair shop could confirm."
+    },
+    {
+      "id": "HW-5",
+      "area": "hardware",
+      "claim": "Clocks: the oscillator input is 24 MHz, the CPU runs at 372 MHz and PLL0 SYSCLK2 (SPI0, SPI1, UART1) at 186 MHz.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["SYS/BIOS programs TIMER64P0 PRD12 = 24000 for its 1 ms tick (simulated, analysis/mmio_trace.py --boot)", "the SPI driver's module-clock constant 186,000,000 (0xC16716E4) gives the observed prescalers (SPIFMT0 0x10408 for 32 MHz, 0x11308 for 9 MHz); later agreement: UART0 divisor 372 = 31,250 baud exactly, MMCSD0 CLKRT 232 = 399 kHz, I2C0 prescaler for a 24 MHz input", "AIS ROM function 6 arguments 0x001E0001, 2823, 3 (docs/05-bootloader.md) read as x31 / 2 from 24 MHz"],
+      "notes": "2026-11-12. Amended 2026-11-12 against TI documents: SPRAB41F Appendix D.1/D.7 (Arg1 = CLKMODE 0 crystal, PLLM 0x1E, PREDIV 0, POSTDIV 1; Arg2 0x000B07 = PLLDIV1 0, PLLDIV3 0x0B, PLLDIV7 7; Arg3 = SPI PRESCALE 3) and SPRUH79C Table 7-12 (multiplier = PLLM + 1, divider = RATIO + 1) give 24 x 31 / 2 = 372 MHz; SPRUH79C Table 7-1 puts UART0, SPI0, MMC/SD0 on PLL0_SYSCLK2, UART1/SPI1 on ASYNC3 (= PLL0_SYSCLK2 by default, CFGCHIP3 never written), I2C0 and Timer64P0/P1 on PLL0_AUXCLK (the 24 MHz oscillator). Cautions: the resulting PLLOUT 744 MHz is above SPRS590G Table 6-4's 300-600 MHz range; SPRS590G cites SPRAAT2, not SPRAB41, for the C6748 ROM, so the function table is assumed. docs/04-hardware-access.md."
+    },
+    {
+      "id": "HW-6",
+      "area": "hardware",
+      "claim": "The OLED is on SPI1 chip select 0 (9.3 MHz, 8-bit, phase 1) with its data/command line on GP2[11] (low = command); the app sends B3 F0, 81 FF, A0 07, AF and frames of 8192 bytes, 4 bits per pixel, even x in the low nibble.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["SPI set-up 0xC167C7B4 and OLEDDriver::init 0xC1672298 simulated with every register access logged (analysis/test_mmio_trace.py)", "D/C pin number 44 at B14+424 = GP2[11]; PINMUX5 nibble 4 = 8 (GPIO2_11 in TI StarterWare's syscfg0 header)", "draw_text_impl 0xC167CDC8..0xC167CDEC: odd x keeps the low nibble (mask 15) and writes grey << 4, even x keeps the high nibble (mask 0xF0 in a20)"],
+      "notes": "2026-11-12. Simulation with polled status registers answered 'ready'. With HW-7, answers what a first bare-metal display driver needs. docs/04-hardware-access.md. 2026-11-13, D1 run 3 on the device: wrong on the nibble order; the unit shows the high nibble as the left (even x) pixel (HW-34). The rest (SPI1, GP2[11], the four commands, 8192-byte frames) is now observed-device: the D1 test image's display works with them. 2026-11-13, D1 run 5: the nibble order is neither reading; the frame is not row-major (HW-35)."
+    },
+    {
+      "id": "HW-7",
+      "area": "hardware",
+      "claim": "The panel MCU is on UART1 (PSC1 module 12, PINMUX4 nibbles 6-7 = 2) at DLL 25 / MDR 0, i.e. 465,000 baud from 186 MHz for a nominal 460,800, 8N1, FIFO trigger 1; the app sends it 0x90, 0xA0 and 0xB1 at start-up, 0xB2 at power-off, LED messages C1 a b c v and C2 x.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["ADControllerUART::set_baud_rate(&g_ad_controller_uart, 460800) and the receive/transmit enables simulated (analysis/test_mmio_trace.py)", "the one-byte senders 0xC161E4A0..0xC161E6A4 each send a constant at B14+1622..1627 (90, 91, B0, B1, B2, A0); 0xC161E72C sends C2 from B14+1628; callers read at 0xC154A804, 0xC154A8D4, 0xC154A918/944, 0xC154ADC8, 0xC15F3724"],
+      "notes": "2026-11-12. What 90, B1, B2 and C2 make the MCU do is not known (no MCU firmware); 91 and B0 are never sent. LED arguments span a 0-2, b 0-5, c 0-7 at the led_set call sites. docs/04-hardware-access.md."
+    },
+    {
+      "id": "HW-8",
+      "area": "hardware",
+      "claim": "No watchdog runs under the stock app, and GP4[11] (power hold) is left an output by the bootloader: the app's power_on_check drives it high without setting its direction.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": ["power_on_check 0xC1646FCC simulated: SET_DATA of bank pair 2 bit 11, no DIR write", "the bootloader runs the same power_on_check before loading SYSTEM (docs/05-bootloader.md)", "no timer register constant in the bootloader; the app uses TIMER64P1 only as a free-running counter (audio_clock_probe_tick) and TIMER64P0 for the tick", "device, D0 2026-11-12: with a SYSTEM image that executes only a self-branch, the unit stayed on for minutes after the power key was released, so the bootloader's power_on_check latches GP4[11] before SYSTEM starts (a reset would have dropped the hold and switched the unit off)"],
+      "notes": "2026-11-12. The direction is inference: it follows only if the bootloader's call sets the pin before SYSTEM starts and nothing resets it (D0 2026-11-12 shows it does set the pin; the no-reset half of the claim is also consistent with D0, since a reset loop would have switched the unit off). A watchdog enabled by the boot ROM is excluded only by the C6748 reset defaults, not checked here. docs/04-hardware-access.md."
+    },
+    {
+      "id": "HW-9",
+      "area": "hardware",
+      "claim": "SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84 bring the board up with identical register writes: SYSCFG unlock, board pin defaults, USB PHY, SPI0/SPI1, OLED, panel UART1, encoders, key matrix, SYNC pins, power, audio power sequence, I2C0, audio start-up (57 register and 40 codec writes), MIDI UART0, USB device and SD; only the audio DMA ring's block length differs (128 vs 96 frames).",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["analysis/hw_compare.py runs each bring-up function in the three products (counterparts by symbol name or func_match) and compares the ordered writes; analysis/test_hw_compare.py", "the bootloader 1.0.17 builds the same SYSCFG unlock keys, 186 MHz clock, SPI rates, panel baud, CFGCHIP2 value and USB interrupt mask (constant pairs, static) and no audio constants"],
+      "notes": "2026-11-12. Simulation; addresses of buffers are not compared. docs/04-hardware-access.md."
+    },
+    {
+      "id": "HW-10",
+      "area": "hardware",
+      "claim": "Audio: the TLV320AIC3106 codec at I2C0 0x18 (100 kHz: ICPSC 2, ICCLKL/H 35 from 24 MHz) is clock master; McASP0 (PSC1 module 7; ACLKX0, AFSX0, AHCLKX0, AMUTE0, AXR13 out, AXR14 in) runs I2S with 32-bit slots on external clocks (RFMT/XFMT 0x180F0, AFSRCTL/AFSXCTL 0x110, ACLKXCTL 0x80); EDMA channels 0/1 ping-pong through PaRAM 64/65 and 66/67 with a completion interrupt on receive.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["audio hardware set-up 0xC1621854, I2C set-up 0xC1671E90 and audio_start 0xC1621574 simulated in the three products, codec writes recorded at codec_write (40, same order as the platform map's static reading)", "register fields decoded with TI StarterWare 1.20.04.01 headers"],
+      "notes": "2026-11-12. Amended 2026-11-12: every McASP0 and EDMA value checked against SPRUH79C (Tables 23-25, 23-35, 23-36, 23-37, 23-43, the initialisation procedure 23.0.21.1.2, Table 16-15) and SPRS590G Table 6-12; ACLKXCTL 0x80 means CLKXP = 1, data shifted out on the falling edge (the doc first said sampled on the falling edge). Codec part named AIC3106 because every register used is in its map (SLAS509G); AIC3104/3105 not excluded by document. Headphone/speaker feed: see HW-15. docs/04-hardware-access.md 'Audio'."
+    },
+    {
+      "id": "HW-11",
+      "area": "hardware",
+      "claim": "MIDI DIN is UART0 (PSC0 module 9, PINMUX3 nibbles 4-5 = 2, divisor 372 = 31,250 baud at 186 MHz, 8N1); the SD card is MMCSD0 (PSC0 module 5, PINMUX10 nibbles 0-5 = 2, 4-bit bus, identification clock CLKRT 232 = 399 kHz, card detect GP4[0] low).",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["MIDI UART start 0xC1620EF4 on g_midi_stream_uart and sd_card_hw_init 0xC167270C simulated in the three products (analysis/hw_compare.py)"],
+      "notes": "2026-11-12. The SD protocol layer was not traced. docs/04-hardware-access.md."
+    },
+    {
+      "id": "HW-12",
+      "area": "hardware",
+      "claim": "USB0 runs as a full-speed device (POWER = 0x40, no HSEN; bcdUSB 1.10) after CFGCHIP2 = 0x0972 (24 MHz reference, PHY PLL on), PSC1 module 1, INTMSKSETR 0x01FF1E1F; SmplTrek's composite configuration has Audio Control, two Audio Streaming interfaces (isochronous OUT 0x01 and IN 0x82, 196 bytes per ms) and MIDI Streaming (bulk 0x83/0x03, 64 bytes); card-reader mode is a separate mass-storage configuration.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["0xC16907C0 and usb_dcd_init 0xC158EE00 simulated in the three products", "interface and endpoint descriptors read from SmplTrek's initialised data (0xC16EF138..0xC16EF228, 0xC16EE499)"],
+      "notes": "2026-11-12. VID/PID are filled in at run time (Sonicware's; a firmware needs its own). 48 kHz 16-bit stereo for USB audio is inferred from the packet size; format descriptors not decoded. Amended 2026-11-12: decoded, see HW-18. docs/04-hardware-access.md. 2026-11-13: the assembled 234-byte descriptor, as the host receives it, is rebuilt and decoded by analysis/usb_desc_map.py (simulated)."
+    },
+    {
+      "id": "HW-13",
+      "area": "hardware",
+      "claim": "The stock app unlocks SYSCFG first (KICK0R 0x83E70B13, KICK1R 0x95A4F1E0) and its board set-up (0xC169CD20) puts the 13 audio pins in fixed states (outputs: GP4[10,12,14,15], GP1[2], GP7[15], GP5[11] low; GP4[13], GP2[8], GP2[9], GP1[3], GP7[14] high; GP3[8] input) before the power sequence GP4[14], GP4[15], GP4[12] high.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["0xC16907D4, 0xC169CD20 and 0xC1649448 simulated in the three products (identical writes)"],
+      "notes": "2026-11-12. Pin roles mostly unknown (platform map, 'Codec set-up'); copying the states reproduces the stock electrical state. Amended 2026-11-12: the power sequence runs after the codec is set up and unmuted, not before audio start (MainDelegate order 0xC154A5D4 GP4[10], 0xC154A630 audio start, 0xC154A838 unmute, 0xC154A928/950 power sequence); roles of GP2[8], GP2[9] in HW-16. docs/04-hardware-access.md."
+    },
+    {"id": "HW-14", "area": "hardware", "claim": "The codec's master clock input is 24.576 MHz: the apps program PLL on, P = 2, J = 8, D = 0 (44.1 kHz: J = 7, D = 3500), leave register 11 (R = 1) and register 102 (PLLCLK_IN = MCLK) at reset, and fs(ref) = MCLK x K x R / (2048 x P) is 48 kHz only for MCLK = 24.576 MHz. Register 7 (0x0A / 0x8A) is the datapath register (fs(ref) select, left/right DAC data), not part of the PLL.", "status": "inferred-static", "confidence": "high", "evidence": ["codec_set_sample_rate 0xC161D560 simulated in the three products (analysis/codec_map.py, test_codec_map.py)", "SLAS509G section 10.3.3.1 equation 2, Tables 10-11..10-15, 10-19, 10-111", "TI StarterWare examples/evmC6748/mcasp/aic31.c programs P = 4, J = 16 for the same MCLK"], "notes": "2026-11-12. The clock source on the board is not seen in code (inference: a 24.576 MHz oscillator)."},
+    {"id": "HW-15", "area": "hardware", "claim": "The stock apps use only the codec's LEFT_LOP/M and RIGHT_LOP/M line drivers, fed directly from the DACs (register 41 = 0x50, DAC_L3/R3); the headphone drivers stay at reset (off). The codec functions that would route DAC_L1/R1 to HPLOUT/HPLCOM/HPRCOM or the line mixers have no caller in any SmplTrek 1.0.65-3.2.174, Lofi-12 XT 1.1.156-1.5.205 or CyDrums 1.1.84; ELZ_1 play 3.1.149 does power all four headphone drivers from DAC_L1/R1.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/codec_map.py --compare: 89 of 89 codec/input calls identical in the three products", "wrapper caller scan of every listed version (call targets and pointer words; same wrapper set and caller counts in all)", "ELZ_1 play 3.1.149 output set-up near 0xC27EEDD0 (static)", "SLAS509G Table 10-49 and section 10.3.5"], "notes": "2026-11-12. Inference, not code: the PHONES jack and the speaker are fed from the line outputs through the VOL pot and amplifiers, and the speaker is cut by a switched jack (manual; no detect input or codec headset-detect use found)."},
+    {"id": "HW-16", "area": "hardware", "claim": "GP2[8] is the speaker mute (active high, = SYSTEM > SPEAKER MUTE, g_settings+0x48) and GP2[9] an output mute driven together with the codec DAC mute (0xC1678640: GP2[9] = m, registers 43/44 = m ? 0x80 : 0); both are high from the board set-up until start-up clears them. GP4[10] is driven high once, first in both app start paths, one tick before the first codec I2C access; GP4[13] has no user after the board set-up.", "status": "inferred-static", "confidence": "medium-high", "evidence": ["setters 0xC1649420, 0xC16496A8, 0xC1649654 and their callers (0xC158B774/0xC158D00C, 0xC154A838/0xC154AE24, 0xC154A5D4/0xC1630DB4), getter 0xC1595274 = g_settings+0x48", "only ldw of B14+12 (GP4[13] handle) is in the board set-up 0xC16497B8"], "notes": "2026-11-12. Code ties for GP2[8]/GP2[9]; electrical roles (and GP4[10] as codec RESET) are inference until a session or schematic."},
+    {"id": "HW-17", "area": "hardware", "claim": "Input front end: GP5[11] switches the INPUT R mic stage (about +28.8 dB), GP7[15] the INPUT L +10 dB Hi-Z stage, and the input dispatcher drives GP7[14] low only with INPUT L presets that use GP7[15]; input_r_gain_apply index 1 = stage on + PGA 0 dB, 2 = stage on + 21 dB (the platform map had 1 and 2 swapped); routing uses LINE1L/LINE1R fully differential and MIC3R for the built-in mic.", "status": "inferred-static", "confidence": "medium-high", "evidence": ["input actions 0xC15F0E80..0xC15F1004, dispatcher 0xC15F102C and appliers 0xC15F1064 / 0xC15F112C simulated in the three products (identical)", "manual: INPUT R mic LOW 0 / NORMAL +28.8 / HI +50 dB, INPUT L Hi-Z LOW 0 / NORMAL +10 / HI +20 dB"], "notes": "2026-11-12. Stage gains are matched numbers, not measured; GP1[2]/GP1[3] (PAD candidate) and the REC SRC handler -> applier mapping not tied."},
+    {"id": "HW-18", "area": "usb", "claim": "SmplTrek USB audio is 48 kHz, 16-bit, 2 channels each way: format Type I PCM, one discrete rate; OUT 0x01 isochronous adaptive and IN 0x82 isochronous asynchronous, 196 bytes, 1 ms; terminals USB streaming -> headphones (0x0302) and microphone (0x0201) -> USB streaming, no feature unit. While a streaming interface is active, the codec PLL fraction is trimmed about every 10 s from TIMER64P1 counts per second of audio, i.e. against the DSP's 24 MHz crystal (PLL0_AUXCLK), not USB SOF, SYNC IN or MIDI clock.", "status": "inferred-static", "confidence": "medium-high", "evidence": ["descriptors read from c6sim start-up memory 0xC16EF048..0xC16EF218 (after the copy table)", "trim: 0xC1661230 / 0xC16612E0 from USB audio code 0xC15E8FB0 / 0xC15E8F80, 0xC1661080(tick_count) from IOObserver::run, audio_clock_probe_tick 0xC1660ED4, codec_set_pll_fraction 0xC161D6E0", "SPRUH79C Table 7-1 (Timer64P1 on PLL0_AUXCLK)", "manual: USB Audio Full Speed, 48kHz-16bit, 2 in / 2 out"], "notes": "2026-11-12. The trim arithmetic was read, not simulated."},
+    {"id": "HW-19", "area": "hardware", "claim": "GPIO inputs read the pad regardless of PINMUX (SPRS590G section 3.6), so GP3[9] (PINMUX7[27:24] reset 0 = 3-stated output, SPRUH79C Table 10-29) works as key column 6 without a mux write. SYSCFG1 PUPD_ENA resets to 0xFFFFFFFF and PUPD_SEL bits 16, 17, 19, 20 to pull-up; groups CP[16] GP2[0,2,3,8,9] + GP3[9..15], CP[17] GP3[0..7] + GP4[8..15], CP[19] GP5[10..15], CP[20] GP5[0..6], which the app's key and encoder set-ups disable.", "status": "deduced", "confidence": "high", "evidence": ["SPRS590G section 3.6 and the terminal tables' CP[n] column", "SPRUH79C sections 10.5.22-10.5.23, Tables 10-29, 10-53..10-55", "pupd writes 0xC1690814 / 0xC1690840 (static)"], "notes": "2026-11-12. Only GPIO-named balls of each group listed."},
+    {"id": "HW-20", "area": "hardware", "claim": "Panel LEDs are addressed (a 0-2, b 0-5, c 0-7) through led_set (cached per address, sends C1 a b c value only on change). The app reaches 115 addresses: row 0 c0-5 written on all three a at once (uncached), 15 pads with three addresses each from pad_rgb_set's three 15-entry setter tables (pad -> addresses in 04-hardware-access.md), and 26 two-channel LEDs at (a, b, c)/(a, b, c+1) in rows 3-5. Identical in SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/panel_map.py and test_panel_map.py: pad_rgb_set 0xC15F3068 and the clear functions 0xC15FB0E0 / 0xC15FB180 / 0xC15FB2EC run in c6sim with panel_led_command hooked, same in the three products", "setter tables 0xC16ED668 / 0xC16ED628 / 0xC16ED5E8 read from c6sim start-up memory", "led_set 0xC15F2A40 (g_led_state 0xC1500578, 3 x 6 x 8)"], "notes": "2026-11-12. Simulated, not observed. Which physical button each two-channel and row-0 LED is, the colour of each channel and the value range are open (Open item 4); a = LED driver and v1/v2/v3 = colours is inference."},
+    {"id": "HW-21", "area": "hardware", "claim": "The one-byte panel-MCU commands are constants at B14+1622..1628 = 90 91 B0 B1 B2 A0 C2, each sent alone. Start-up sends 90 after the UART enables, B1 when power_on_check returns 1 or 2, then A0 from the normal-start function; power-off sends B2 early and C2 (no argument) after the DAC mute and before settings_save. 91 and B0 have no caller and no pointer.", "status": "inferred-static", "confidence": "high", "evidence": ["panel_map.py runs the seven senders 0xC161E680, 0xC161E620, 0xC161E500, 0xC161E4A0, 0xC161E560, 0xC161E5C0, 0xC161E72C in the three products (identical)", "call sites 0xC154A8D4, 0xC154A918 / 0xC154A944, 0xC154A804 (in 0xC154A5CC, reached from 0xC154AA0C), 0xC154ADC8, 0xC154AE5C; pointer scan of c6sim start-up memory"], "notes": "2026-11-12. Corrections: C2 was listed as 'C2 x'; A0 was listed before the power check. What the MCU does with each byte is inference."},
+    {"id": "HW-22", "area": "hardware", "claim": "The SPI flash driver sends write-enable 06 (data byte B14+1630) in its own transfer before every erase and program step, and erases with D8 (64 KiB), 52 (32 KiB) or 20 (4 KiB) chosen by alignment and remaining length. Its status-register writer (06 then 01 + data) and register-15 read are unreferenced in 3.2.174, and it has no 9F (JEDEC ID) read.", "status": "inferred-static", "confidence": "high", "evidence": ["panel_map.py runs write_enable 0xC15DF028 with a fake SPI object in the three products (06 in all)", "do_erase 0xC15DF060 (calls 0xC15DF09C), do_program 0xC15DF2F4 (0xC15DF340)", "no call and no pointer to 0xC15DFC58 / 0xC15DFDB8 / 0xC15DFDE0 / 0xC15DFDEC / 0xC15DFE24 (objdump call targets, c6sim memory scan)"], "notes": "2026-11-12. Closes the write-enable part of Open item 10. Part number unknown (a 15 read and 2-byte status write fit Macronix MX25L parts: inference)."},
+    {"id": "HW-23", "area": "hardware", "claim": "The SD card protocol layer (0xC15D1F20-0xC15D3100) initialises with CMD0, CMD55 probe, CMD0, CMD8 0x1AA, ACMD41 0x40FF8000 (255 tries, 10 ms apart), CMD2, CMD3, CMD9, CMD7, CMD16 512 (standard capacity only), ACMD51, then ACMD6 (4-bit when controller and SCR allow) and CMD6 0x80FFFFF1 (high speed); it reads with CMD17/18 and writes with CMD24/25, and ends every multi-block transfer with an explicit CMD12. The same constants are in the same order in Lofi-12 XT and CyDrums, and the simulated command words are identical in the three.", "status": "inferred-static", "confidence": "high", "evidence": ["static reading of 0xC15D2EC8 and the per-command functions (04-hardware-access.md 'SD card' table)", "constant order 0x80FFFFF1, 55, 55, 0x1AA, 0x40FF8000, 41, 55, 51 in work/lofi-1.5.205.dis 0xC2C16094- and cydrums-1.1.84.dis 0xC2537654-", "analysis/sd_map.py and test_sd_map.py run each command function in c6sim in the three products (2026-11-12)"], "notes": "2026-11-12. Shape matches TI StarterWare AM335x mmcsd_proto.c (not in the C6748 package; origin inference). Corrected the same day: CMD9, CMD7, CMD16, ACMD51 and CMD6 were listed at addresses inside their functions (0xC15D2A58, 0xC15D2C28, 0xC15D2C6C, 0xC15D2D64, 0xC15D2198); the call targets are 0xC15D2A4C, 0xC15D2C24, 0xC15D2C68, 0xC15D2D18 and the step 0xC15D2160. 'No CMD12' was wrong: CMD12 is 0xC15D1F2C (mvk 12). OCR and CCS are at card+52 / card+59, not ctrl+52."},
+    {"id": "HW-24", "area": "hardware", "claim": "On a normal boot BOOT 1.0.17 initialises the OLED, draws the SONICWARE logo and latches the power hold GP4[11] before it jumps into SYSTEM. A SYSTEM image that never runs therefore leaves the unit on, frozen on that logo, with the power key dead, until the supply is removed; the SONICWARE splash at power-on is the bootloader's, not the app's.", "status": "observed-device", "confidence": "high", "evidence": ["D0 2026-11-12 (experiments/sessions/D0-hang-recovery.md): hang image SYSTEM 0.0.1 jumped into; the operator observed the logo frozen on screen for about a minute and no response to the power key; adapter pulled to switch off"], "notes": "2026-11-12. Which bootloader code draws the logo is not traced (docs/05-bootloader.md 'Normal boot'). Consequence for a bare-metal test image: its oled_init runs on a panel the bootloader already initialised, and its first frame replaces the logo."},
+    {"id": "HW-25", "area": "hardware", "claim": "The SD controller layer writes, per command, MMCNBLK, MMCARGHL then MMCCMD, never setting PPLEN (CMD line open-drain throughout); data commands add DMATRIG | DCLR | WDATX after MMCFIFOCTL 1, 0, 4 (read) or 6 (write) (64-byte FIFO level), MMCBLEN 512 and an EDMA AB-synchronised PaRAM (16 for reads from MMCDRR, 17 for writes to MMCDXR; 4 x 16 bytes per event, 8 events per block). After initialisation the card clock is MMCCLK 0x103 (186 MHz / 8 = 23.25 MHz) unless the CSD byte at card+58 is already 0x5A, then 0x101 (46.5 MHz). With MMCIM 0x7D the stock never waits for BSYDNE; after writes it polls CMD13 until the card is in tran. Identical in SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/sd_map.py and test_sd_map.py: controller record filled by 0xC164620C at 0xC14B63A8 (mmcsdCtrlInfo layout as StarterWare bootloader/src/bl_hsmmcsd.c 402-419), command functions and 0xC15D2288 / 0xC15D1FF4 / 0xC15D3010 / 0xC15D2160 / 0xC167B4CC run in c6sim with the semaphore waits stubbed, same in the three products", "MMCCMD fields SPRUH79C Table 25-18, MMCFIFOCTL Table 25-29, EDMA OPT Table 16-15, MMCIM Table 25-10, clock formula 25.2.1"], "notes": "2026-11-12. Simulated, not observed. That the stock runs cards at 23.25 MHz in practice is inference (CMD9 follows CMD0, which per the SD specification returns TRAN_SPEED to 0x32). Consequence for a driver written from the manual: a BSYDNE wait after CMD24 may never end, since SPRUH79C 25.2.9.7.6 sets BSYDNE only for BSYEXP commands and DATDNE already covers programming (note under Table 25-8); inference from the manual, see 04-hardware-access.md 'Stock SD driver against a minimal driver'. The MMC interrupt handler mmcsd0_isr 0xC166F98C reads MMCST0 and branches on RSPDNE, TOUTRS, TOUTRD and the CRC bits; its full dispatch was not traced."},
+    {"id": "HW-26", "area": "hardware", "claim": "The stock apps write the first plane of the audio output block (+16) to the even 32-bit words of the McASP TX buffer and the second plane to the odd words (SmplTrek 3.2.174, Lofi-12 XT 1.5.205, CyDrums 1.1.84, identical). SmplTrek's audio_fill_input_block fills input plane 0 from the source selected by g_settings+0x1C and plane 1 from +0x20 (1 = even words, 2 = odd words, 0 = silence; +0x24 non-zero forces 1, 2). Even words carry the left ADC and odd words the right ADC: every REC SRC source that powers one ADC reads both planes from the matching slot (HW-28).", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/audio_slot_map.py and test_audio_slot_map.py: audio_block_process (SmplTrek 0xC1620FB4) run in c6sim with the render callback hooked to fill known values, in the three products; audio_fill_input_block (0xC159A6EC) run with the three settings fields poked over every combination", "SLAS509G section 10.3.2.3 (I2S: left after the WCLK falling edge, right after the rising edge); SPRUH79C Table 23-36 (FSXP = 0: rising edge starts the frame) and Figure 23-8; codec register 7 = 0x0A (T10-15)", "analysis/rec_src_map.py and test_rec_src_map.py: built-in mic, Hi-Z and mono line power only the left ADC and read slot 0; dynamic mic powers only the right ADC and reads slot 1; ADC power bit SLAS509G Table 10-30 D2"], "notes": "2026-11-13. Correction the same day: the first version concluded from the documents alone (SLAS509G 10.3.2.3, SPRUH79C Table 23-36 FSXP = 0) that even words are the codec's right channel; the stock's REC SRC set-up, which works on the product, requires even words = left. Why the documents read the other way is not known. Simulated, not observed; that a powered-down ADC channel sends zeros is inference. A one-channel tone in D3 confirms the physical order. 2026-11-17: the transmit half is observed on the unit (HW-61, M1 A4-A6, headphones: even words in the left ear); the receive half is still simulated."},
+    {"id": "HW-27", "area": "hardware", "claim": "SYNC IN is GP7[8], an edge interrupt (GPIO_B7INT, event 72) whose edge follows POLARITY IN (g_settings+0x08: 1 rising, 0 falling); edges are flagged by the ISR and handed to a delegate by a 1 ms Clock function. SYNC OUT is GP7[9]: a pulse starts at clock positions 0 and 36 (MIDI clock goes out every 3 positions, so 72 per quarter note: 2 pulses per quarter note), drives the active level (high with POLARITY OUT = 0, g_settings+0x0C), ends after 15 ms, and a new pulse needs 60 ms since the last start. Set-up: PINMUX17 nibbles 0, 1 = 8, GP7[9] output low, GP7[8] rising edge.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/sync_map.py and test_sync_map.py: 0xC1671EE0, 0xC16720D8, 0xC167208C, 0xC1671F24, 0xC1671F80, gpio_bank_isr 0xC1672134 and the clock-position handler 0xC154A264 run in c6sim (SmplTrek 3.2.174); the GPIO block is the same 168 instructions in Lofi-12 XT 1.5.205 and CyDrums 1.1.84 (platform-map 'GPIO')", "GPIO registers SPRUH79C Table 19-2; event 72 GPIO_B7INT SPRUH79C Table 2-1; manual: SmplTrek v3 Reference Manual r2, 'Setting the clock'"], "notes": "2026-11-13. Simulated, not observed. The wrap of the position at 72 was simulated the same day on the internal clock object 0xC1504310 (advance 0xC1681738: 144 steps per second at tempo x 10 = 1200, positions 0-71 twice); 28,800,000 is its step threshold, 48,000 x 60 x 10. The 1 ms period comes from the Clock object words read in SYS/BIOS field order (inference). Which object takes SYNC IN edges and how tempo is derived was not traced. Jack wiring and signal levels are not visible to code."},
+    {"id": "HW-28", "area": "hardware", "claim": "rec_src_select (SmplTrek 0xC158B990) maps REC SRC (g_settings+0x10, 0-25) as: 0 built-in mic (MIC3R into the left ADC, right ADC off, GP1[2] high, planes from slot 0); 1-3 Hi-Z on INPUT L (LINE1L, left ADC only, INPUT L mode 1/2/3: GP7[15] off/on/on, left PGA 0/0/+10 dB, slot 0); 4-6 dynamic mic on INPUT R (LINE1R, right ADC only, INPUT R level 0/1/2: GP5[11] off/on/on, right PGA 0/0/+21 dB, slot 1); 7-8 stereo line (both ADCs, planes slot 0 and slot 1); 9-10 mono line (LINE1L, left ADC only, slot 0); 11 USB; 12-25 resampling. Pairs 7/8 and 9/10 leave identical codec, pin and slot state.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/rec_src_map.py and test_rec_src_map.py: rec_src_select run in c6sim for every value after the stock audio start, codec writes recorded at codec_write and decoded against SLAS509G Tables 10-23..10-32; names from the recorded-file prefix function 0xC156C804 run per value", "manual: SmplTrek v3 Reference Manual r2, 'Selecting the recording source' and 'Name of the recorded file'"], "notes": "2026-11-13. Simulated, not observed. The PAD (8 and 10 = PAD on) is set by the REC SRC page around the selector, not by it: see HW-29. GP1[2] as a built-in mic switch is inference from source 0 being its only setter here."},
+    {"id": "HW-29", "area": "hardware", "claim": "SmplTrek 3.2.174 switches the line PAD with GP1[3], low = PAD on. REC SRC 8 and 10 are the line sources with PAD on, 7 and 9 without; the REC SRC value-change handler 0xC153EF40 sets g_settings+0x24 (pad_set 0xC158C088) and calls pad_apply 0xC15F1290 (1: GP1[3], GP7[15], GP5[11] low, GP7[14] high, LINE1L and LINE1R each into its own ADC at 0 dB, PGA 0; 0: GP1[3] high). The settings apply replays it at start-up (0xC158B780). While the PAD is on, audio_fill_input_block takes the input planes from (slot 0, slot 1). The input dispatcher 0xC15F1A84(adc, route) drives GP1[3] low only for routes 8 and 13, named 'L LineIn PAD' and 'R LineIn PAD' on the factory AUDIO TEST page. No digital gain reads +0x24.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/pad_map.py and test_pad_map.py: the REC SRC page handlers, pad_apply, the GP1[3] setter 0xC1649680 and the input dispatcher run in c6sim after the stock audio start; GPIO data registers named per SPRUH79C Table 19-2 (GP1[n] = bit 16 + n of SET_DATA01 / CLR_DATA01)", "route names: pointer table copied to 0xC16ED2A8 at start-up, read by the AUDIO TEST page 0xC16140EC", "manual: SmplTrek v3 Reference Manual r2, LINE PAD -20 dB"], "notes": "2026-11-13. Simulated, not observed. That GP1[3] is an analogue attenuator and that it gives the manual's -20 dB is inference: no digital PAD was found and GP1[3] has no other user. Corrects 01-platform-map.md, which listed input_l_gain_apply as a GP1[3] user and called 0xC15F0E80 part of every input change; it runs only for PAD on."},
+    {"id": "HW-30", "area": "hardware", "claim": "SmplTrek 3.2.174 has no code path that turns the speaker off for the built-in mic: the speaker mute GP2[8] is driven only by SPEAKER MUTE and the factory test page, and no caller of the REC SRC getter writes the codec or a speaker pin differently for source 0 (built-in mic) than for source 7. Its one built-in-mic rule is in audio_mix_input_monitor (0xC159AA54): with monitoring on and source 0, the input is mixed only while GP3[8] reads high; other sources do not read GP3[8].", "status": "inferred-static", "confidence": "medium", "evidence": ["analysis/rec_src_map.py monitor_gate and test_rec_src_map.py test_monitor_gate: the monitor function run in c6sim with the pin and conditions hooked", "direct-caller and pointer search for the GP2[8] and GP2[9] setters (0xC1649420, 0xC158B774, 0xC16496A8) in the listing and image; c6sim diff of the 31 REC SRC getter callers, source 0 against 7, monitoring on", "manual: SmplTrek v3 Reference Manual r2 p. 201, Relationship between built-in speaker and mic"], "notes": "2026-11-13. Medium: a path through a function pointer built at run time would be missed. Whether GP3[8] is the headphone or the INPUT jack detect is open; as headphone detect, the gate plus the hardware headphone switch (HW-15) would match the manual. D3-audio-pins-plan step 5 tests it."},
+    {"id": "HW-31", "area": "hardware", "claim": "SmplTrek 3.2.174 reads SYNC IN as a fixed 2 PPQN. Each edge goes through MainDelegate's SyncClockReceiverDelegate (0xC154A1F0) to the external-clock object 0xC1501FE8 (36 steps per edge, set only by its static initialiser 0xC16A1BB8). Every second edge is a beat. Beat intervals of 2000 ms or more are dropped; the others feed a four-entry ring, and tempo x 10 = 2,400,000 / (sum of the four intervals in ms). A change of more than 5.0 BPM refills the ring.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/sync_map.py sync_in_tempo and test_sync_map.py test_sync_in_tempo: 0xC165F5EC run in c6sim with the millisecond tick 0xC16ACDA0 hooked (300 ms edges -> 100.0 BPM, 300 then 250 -> 120.0, 2500 ms -> ignored)", "MainDelegate vtables from work/smpltrek-3.2.174.rtti.json (SyncClockReceiverDelegate at this + 20)"], "notes": "2026-11-13. Simulated, not observed. 0xC1652680 can block the edge (not traced); the spacing of steps between beats (0xC165F40C) was not traced. That 0xC16ACDA0 counts milliseconds is inferred from the 60,000 in the constant."},
+    {"id": "HW-32", "area": "hardware", "claim": "A polled SPI1 master transfer on this board never completes unless SPIPC0 is written: after SPIGCR0 reset and release, SPIGCR1 = 3, SPIFMT0 0x00011308, SPIDEF 0xFF and SPIGCR1 enable, a write to SPIDAT1 leaves SPIBUF RXEMPTY set for over 10 ms. The stock app writes SPIPC0 = 0x0E01 (CLK, SIMO, SOMI, SCS0 as SPI function pins) in its SPI driver build (0xC1626468 through 0xC167140C) right after the master-mode write, 0x0E03 for SPI0; the register set-up function traced for 04-hardware-access.md does not contain that write.", "status": "observed-device", "confidence": "high", "evidence": ["D1 run 2, 2026-11-13 (experiments/sessions/D1-hello.md): test image 0.2.4 without the SPIPC0 write switched itself off about 15 s after the logo, its fault code 3 = first OLED command byte never completed, after the PSC transition had completed (fault 2 not raised)", "static: work/smpltrek-3.2.174.dis 0xC167C72C passes 0xE01 (SPI1) / 0xE03 (SPI0) into 0xC1626468, which calls 0xC167140C (conditional store to SPI base + 0x14) between SPIGCR1 |= 3 and the clock-rate write"], "notes": "2026-11-13. The timing is by eye; the 15 s step is unambiguous against 10 s and 20 s. Whether the display then works with SPIPC0 written is run 3's question (image 0.2.5). Answered 2026-11-13, run 3: it does; the display showed the status page and the app's page."},
+    {"id": "HW-33", "area": "hardware", "claim": "SmplTrek 3.2.174's SPI driver build (0xC1626468, through 0xC167140C) writes SPIPC0 right after SPIGCR1 = 3: 0x0E01 for SPI1 (SOMI, SIMO, CLK, SCS0 as SPI pins) and 0x0E03 for SPI0 (plus SCS1). The SPI set-up in docs/04-hardware-access.md left it out because c6sim (until 2026-11-13) took the PROT bit for a whole execute packet from the last fetch packet it reaches, so the load at 0xC1671414 (fetch packet without PROT) got four NOP cycles from 0xC1671420's packet (PROT) and the SPIPC0 store fell out of the bnop's last delay slot.", "status": "inferred-static", "confidence": "high", "evidence": ["SPRUFE8B 3.10.2.2, Table 3-14: PROT adds four NOP cycles after each LD instruction within its fetch packet", "SPRUH79C 28.3.6, Table 28-14: SPIPC0 bits 11..8 SOMIFUN, SIMOFUN, CLKFUN, ENAFUN; 7..0 SCS0FUN[n]", "c6sim after the fix: 0xC167C7B4 and 0xC167C72C(1, 0) write 0x01F0E014 = 0xE01 between SPIGCR1 = 3 and SPIFMT0; SPI0 0x01C41014 = 0xE03; test_c6sim.py SmplTrekProtPerFetchPacket; the 164 analysis tests still pass", "device: HW-32 (D1 run 2, transfers never complete without SPIPC0)"], "notes": "2026-11-13. Found while bringing up the test image, from HW-32. Other traces made before the fix could have missed a store in a last delay slot after a cross-fetch-packet protected load; the pinned tests did not change. Rerun 2026-11-13: the fix changes the PROT timing of 83 execute packets in SmplTrek, 60 in Lofi-12 XT, 58 in CyDrums (almost all function returns, lddw/ldw || bnop b3). Every simulator tool (pad_map, audio_slot_map, hw_compare -v, codec_map --compare, cydrums_card_check, mmio_trace --boot for the three products, rec_src_map, panel_map --compare, sync_map, sd_map --compare, usb_desc_map, c6sim settings --defaults for the three) was run under the old and the new packet decoder: the only output differences are the SPIPC0 writes (SPI0 0xE03, SPI1 0xE01 in the SPI set-up and OLEDDriver::init; Lofi-12 XT and CyDrums still match SmplTrek) and the CyDrums start-up card block taking 9965 instead of 10009 cycles, same result. Statements simulated outside these tools that touch an affected packet: none found in the docs."},
+    {"id": "HW-34", "area": "hardware", "claim": "On the SmplTrek's OLED, as the bootloader and the stock app leave it (remap A0 07), the high nibble of each framebuffer byte is the left pixel (even x) and the low nibble the right one (odd x); the frame is 128 x 128 x 4 bpp, row-major, 64 bytes per row, top row first.", "status": "superseded", "confidence": "low", "evidence": ["D1 run 3, 2026-11-13, image 0.2.5 with even x in the low nibble: text at the right places and unreadable; photographed (status page and app page)", "the simulated frame rendered with the two nibbles of every byte swapped reproduces the photographed glyph shapes; a one-bit SPI shift does not (experiments/sessions/D1-hello.md 'Run 3')", "line order and positions in the photographs match the frame, so the stride and orientation are as sent"], "notes": "2026-11-13. Contradicts the static reading of the stock's draw_text_impl in docs/04-hardware-access.md 'Pixel format' (even x low nibble); which side of that reading is off (the parity test or the x it is applied to) is not settled, but the device's order is. Image 0.2.6 writes even x to the high nibble; run 4 confirms by legible text. 2026-11-13, D1 run 4: NOT confirmed; with even x in the high nibble the text is still unreadable (photographed), so the fault is not a nibble swap and the render comparison above was misread. Downgraded to open. Image 0.2.7 shows a test pattern (experiments/sessions/D1-hello.md 'Run 4') to settle the order from a photograph. 2026-11-13, D1 run 5: the photograph settled it: the frame is not row-major at all (HW-35); this claim is wrong and superseded by HW-35. 2026-11-17: status set to 'superseded', added to the registry for this case."},
+    {"id": "HW-35", "area": "hardware", "claim": "On the SmplTrek's OLED as the bootloader and the stock app leave it (remap A0 07), an 8192-byte frame is taken as 64 blocks of 128 bytes, block y >> 1 holding the row pair (2k, 2k+1); within a block the first 64 bytes are the even columns and the next 64 the odd columns, one byte per column; the even row of the pair is the low nibble and the odd row the high nibble: pixel (x, y) is byte 128 (y >> 1) + 64 (x & 1) + (x >> 1). Equivalently frame byte k, nibble n (0 = high) is panel pixel X = 2 (k mod 64) + ((k div 64) mod 2), Y = 2 (k div 128) + 1 - n. A uniform one-row or one-column shift of the whole picture is not excluded.", "status": "observed-device", "confidence": "high", "evidence": ["D1 run 5, 2026-11-13, image 0.2.7's test pattern photographed: rows of FF bytes dotted at a two-pixel pitch, columns of FF bytes continuous, columns of F0 or 0F bytes beaded at a two-row pitch, even-x and odd-x rows at the same x, the staircase's odd-row pixels one row up and one column right, the 45-degree line as reversed dashes", "the 0.2.7 frame rendered through this mapping reproduces every feature of the photograph (experiments/sessions/D1-hello.md 'Run 5')", "the 2 x status page is legible under it (photographed): 2 x 2 blocks map onto 2 x 2 blocks", "D1 run 6, 2026-11-13, image 0.2.8 drawing in this order: the pattern page photographed exactly as drawn with a one-pixel border on all four sides and every line continuous (photographed), and the 1 x text legible (photographed): no residual shift", "static (2026-11-13): the stock's draw_text_impl (0xC167CCA0; A4 frame, A6 text, B6 point {x, y}) stores each pixel at 128 (y >> 1) + 64 (x & 1) (extu b5,31,25 on x in B5) + (x >> 1) at 0xC167CDA4-0xC167CDEC, the grey shifted into the high nibble (shl 4) when y is odd: the same layout, no conversion"], "notes": "2026-11-13. Supersedes HW-34 and the static 'Pixel format' reading in docs/04-hardware-access.md (even x low nibble, row-major): the stock's drawing must address the frame this way or convert from a canvas; which was open (answered 2026-11-13: draw_text_impl writes this byte directly, no conversion). Reads as a 128-SEG x 128-COM controller mounted with its segments running down the screen, written with vertical address increment and the COM lines split odd/even. Image 0.2.8 draws in this order; run 6 confirms it (a clean one-pixel border on all four sides) or shows a residual shift. 2026-11-13, D1 run 6: confirmed, and the uniform shift the claim leaves open is excluded (evidence 4)."},
+    {"id": "HW-36", "area": "hardware", "claim": "With UART1 set up by the stock's traced sequence (PSC1 module 12, PINMUX4 nibbles 6 and 7 = 2, MDR 0, DLL 25, LCR 3, FCR 7 then 1, PWREMU_MGMT 0x2001 then 0x6001) and polled, the D1 test image's transmit side reaches the panel MCU (C1 messages light the LEDs they address) while its receiver delivered no byte (LSR DR never set) in four runs with pads pressed and A0 sent, with the link set up within a second of power-on (runs 3, 4, 6) or tens of seconds later (run 5). Whether the receiver set-up or the MCU's sending is at fault is open.", "status": "observed-device", "confidence": "high", "evidence": ["D1 run 4, 2026-11-13, image 0.2.6: TRK 8 lit at start and the VALUE sweep lit LEDs (operator report)", "D1 run 6, 2026-11-13, image 0.2.8: TRK 8 lit, the sweep lit LEDs, and the status page's count of received bytes stayed 0 (photographed: RX 0 00) with pads pressed; runs 3 and 5 saw no reply or pad message either", "once after a restart in run 6 the sweep lit nothing (operator report, not reproducible)"], "notes": "2026-11-13. Image 0.2.9 tests the receiver with the UART's internal loopback (MCR LOOP, SPRUH79 'Loopback control'), spaces 90 / B1 / A0 by 50 ms and repeats A0 every 2 s while unanswered (experiments/sessions/D1-hello.md 'Run 6'). Not yet tested: the RXD pin's level as a GPIO, an enable between the MCU and the DSP. Run 6 also saw a sweep value above the stock's constants (0, 1, 3, 6; the sweep allows 0-15) light the neighbouring button's LED too: the value range the MCU accepts is narrower (inference; run 7 records the threshold). Answered 2026-11-14 by D1 run 7 (0.2.9): LP OK, the A1 reply parsed and pads streaming; the first A0, sent about 100 ms after the set-up, was not answered and the repeat 2 s later was, so the receiver set-up was never at fault and the MCU ignores a request sent that early (HW-46). The threshold: the neighbouring LED lights from value 11 (HW-47)."},
+    {"id": "HW-37", "area": "hardware", "claim": "SmplTrek 3.2.174's key scan and encoder decoding, run in c6sim on modelled GPIO inputs: each of the 48 matrix keys (row GP2[r] driven high, column GP3[1..6, 9, 11] read high) sets held bit 8r + column alone, and GP5[10] low sets bit 4; each encoder's pins are as in 04-hardware-access.md, the first phase after rest (3) sets the direction (1: -1, 2: +1), every arrival at phase 0 with a direction set counts one step (one per clean detent, bounces into 0 count again), and steps are reported every 16 polls.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/input_map.py and test_input_map.py: control_switch_poll 0xC16534C0 on g_control_switch_scanner 0xC1501DB0; encoder_poll_all 0xC166DA48 on g_encoders 0xC10E1288 with a stand-in delegate", "c6sim checked against TI-compiled C (TOOL-4)", "SPRUH79C Table 19-2 for the GPIO data registers"], "notes": "2026-11-13. Simulation, not device: which physical button or knob has which bit or index, and the electrical polarity, are not observed. Corrects the platform map's encoder reading (+1/-1 per quadrature change). The encoder_update evidence in symbols/smpltrek-3.2.174.json still has the old wording."},
+    {"id": "HW-38", "area": "hardware", "claim": "Simulated in SmplTrek 3.2.174: power_on_check (0xC1646FCC) returns 0 at once when the power key GP3[0] reads high at entry, 1 after ten 50 ms checks with it low (having set GP4[11] through SET_DATA45 bit 11), 2 when the power manager's +28 byte is already set, and never returns if the key is released during the checks; sd_card_detect_raw reports a card when GP4[0] is low; the one-byte MCU senders send B1 (0xC161E4A0), B0 (E500), B2 (E560), A0 (E5C0), 91 (E620), 90 (E680), C2 (E72C); panel_led_command sends C1 a b c value; led_set caches LED (a, b, c) at g_led_state index 48a + 8b + c.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/input_map.py and test_input_map.py (power key, card detect)", "senders and led_set run in c6sim with the send function 0xC161E3C0 hooked to read its buffer (2026-11-13 session; same method as panel_map.py)", "c6sim checked against TI-compiled C (TOOL-4)"], "notes": "2026-11-13. Corrects two hand readings: the platform map said power_on_check returns 2 when the key is not held (it returns 0: the 0 is set in a branch delay slot at 0xC164700C), and the led_set evidence in symbols/smpltrek-3.2.174.json says index 6a + b + 8c (it is 48a + 8b + c, the 3 x 6 x 8 table 04-hardware-access.md already describes). The symbol file's wording, also for power_on_check, was not changed with this note. Also 2026-11-13: the flash driver's command bytes are simulated too (analysis/flash_cmd_map.py, test_flash_cmd_map.py): per erase/program step 05 + status byte, 06 alone, then 20/52/D8 or 02 + 3-byte address; 02 sends one 256-byte page; read is 03 + address; do_program's arguments are (this, addr, buf, len), not (addr, len, buf) as the symbol file's prototype says."},
+    {"id": "HW-39", "area": "hardware", "claim": "SmplTrek 3.2.174's panel-MCU parser (ADControllerUART::parse 0xC161DF94), simulated: Bn lo hi sets channel n (0-15) to lo | hi << 7 and calls delegate slot 1 (channel, value); A1 + six bytes is stored at uart+70..75 without a callback; a packet split across reads completes; a new status byte abandons a half-received packet; status types 8x, 9x and Cx-Fx are ignored; bytes received while idle also go to delegate slot 0, which no ADControllerDelegate of the image overrides (MainDelegate, AppTestInterface: the empty 0xC16A6360).", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/panel_rx_map.py and test_panel_rx_map.py (drain 0xC161BAD8 fed from a list, stand-in delegate)", "work/smpltrek-3.2.174.rtti.json: the two classes with an ADControllerDelegate base have slot 0 = 0xC16A6360 (bnop b3,5)", "c6sim checked against TI-compiled C (TOOL-4)"], "notes": "2026-11-13. Simulation of the app's side only: what the MCU sends, and when, is for a device session (HW-36: nothing received yet in D1)."},
+    {"id": "HW-40", "area": "hardware", "claim": "SmplTrek 3.2.174's USB audio sample path, simulated: OUT (interface 1) bytes go from the receive tUSBBuffer 0xC16CB350 into a 1152-byte ring 0xC14EED30 with no overrun check; once per audio block 128 frames are copied to 0xC14F19F8 as int32 sample << 16 only when at least 512 bytes wait (otherwise the block is left unchanged), and TrackSound::USBTrack::render reads that block. IN (interface 2): after the mix, L/R floats * 32767.0 are truncated to int16 without clipping into 32 packets of 192 bytes (48 frames); each TX-complete sends the next packet or a zero-length one. Event 14 {interface, alt} sets B14+764 / B14+768 and calls USBAudioStreamingDelegate slots 0/1 (interface 1 on/off) and 2/3 (interface 2).", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/usb_audio_map.py and test_usb_audio_map.py (tUSBBuffer calls, delegate and timer calls hooked)", "docs/01-platform-map.md, 'USB audio sample path'", "c6sim checked against TI-compiled C (TOOL-4)"], "notes": "2026-11-14. Event codes from usblib.h. The stock audio class is not the PDK's usbdaudio.c (that one takes app buffers and uses CPPI DMA); origin open. Not observed on hardware."},
+    {"id": "HW-41", "area": "hardware", "claim": "SmplTrek 3.2.174's external clock (SOURCE = MIDI or SYNC), simulated with SYNC IN edges: 0xC165F40C, run once per 128-frame block, sends no positions before the first beat, then up to 36 steps per edge spaced at the current tempo (72 per beat) to delegate slot 1; steps owed when an edge arrives early are all sent in the next block, and after 36 steps the clock waits for a late edge, so no step is dropped or added. SYNC IN edges are ignored while 0xC1652680() is non-zero, which is during an audio export.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/sync_map.py sync_in_steps and test_sync_map.py test_sync_in_steps", "the export gate: symbol file midi_tx_allowed / audio_export_suspend (static)", "c6sim checked against TI-compiled C (TOOL-4)"], "notes": "2026-11-14. Only the SYNC IN feed was simulated; MIDI clock input was not run. Not observed on hardware."},
+    {"id": "HW-42", "area": "hardware", "claim": "SmplTrek 3.2.174's mmcsd0_isr (0xC166F98C), simulated per MMCST0 bit: RSPDNE -> listener slot 0, DATDNE -> slot 1, TOUTRS / TOUTRD / CRCWR|CRCRD -> slot 2 with -1 / -2 / -7, other bits ignored; on RSPDNE with B14+1124 == 4 (a command without data) it posts Event 0xC14FFD54 bit 4 with status 0. The listener table (0xC16EFBA0) is empty after start-up and its setter has no reference, so in the stock app the RSPDNE post is the interrupt's only effect.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/mmc_isr_map.py and test_mmc_isr_map.py (MMCST0 modelled as clear-on-read, SPRUH79C 25.4.3)", "no caller or data word for 0xC166F978 (listing and image scan)", "c6sim checked against TI-compiled C (TOOL-4)"], "notes": "2026-11-14. Open: how data commands (mode 1) are released, and whether a response time-out blocks mmcsd_wait (Event_pend with no time-out) for good; inference, not observed. 2026-11-14 later: the open questions (data-command release, unanswered commands) are answered in HW-44; DATDNE in mode 1 also posts (not covered by the first test)."},
+    {"id": "HW-43", "area": "hardware", "claim": "Simulated in SmplTrek 3.2.174: TrackSound::USBTrack::render (0xC15EB7F8) mixes the USB input block only while g_usb_track's flags word (+8) is above 31, i.e. bit 5 (playing) is set. Bit 5 is set by USBTrack vtable slot +24 through tracks_start (0xC15AA9E0, index or -1 for all tracks), which app pages call as a play toggle guarded by track_is_playing (0xC15A9D8C). tracks_stop (0xC15AA8E0) sets bit 1 and a request byte, and render stores 2 (stopped) on the second block after it. The USB audio delegate (USBAudioEnvetReceiver, 0xC16DB68C) does not touch the track; its interface-1 stop slot zeroes the 1024-byte input block. The second ring reader 0xC15E970C is a channel-select variant of the pull (chA, dstA, dstB, chB, n) with no reference in 3.2.174, 3.0.148, 1.0.65, Lofi-12 XT 1.5.205 or CyDrums 1.1.84.", "status": "inferred-static", "confidence": "medium", "evidence": ["analysis/usb_audio_map.py (track, interface_1_stop_delegate, read_channels)", "analysis/test_usb_audio_map.py", "docs/01-platform-map.md \"USB audio sample path\""], "notes": "2026-11-14. Corrects the map's earlier 'bit 5 set; setter not traced' and 'second reader: rate matching (inference)'. Which user action calls tracks_start for track 13 (a per-track PLAY key or the transport with index -1) was not traced to a button. The number of blocks the start request byte (+36) takes to clear depends on the mixing helper 0xC15EAAD0's state. Later 2026-11-14: the user action is the USB AUDIO track pad (manual v3 pp. 136-137, HOLD toggles / GATE while held); tracks_start callers are the mixer, audio input, sample recording and FX setting page toggles, handle_track_cc, SequencerDelegate slots 0 / +40 and SequencerPlayerDelegate slot +8. The path from the pad press to one of them, and where HOLD/GATE is read, was not traced."},
+    {"id": "HW-44", "area": "hardware", "claim": "Simulated in SmplTrek 3.2.174 with the real mmcsd0_isr run from inside the wait: every SD command waits in cmdStatusGet (called by the register writer 0xC167B54C after MMCCMD) via mmcsd_wait = Event_pend(0xC14FFD54, 0, any bit, timeout 1000 Clock ticks). A command without data is released by RSPDNE (mode 4), a data command by DATDNE (mode 1); CMD18 is followed by CMD12. A command that is not answered (TOUTRS, TOUTRD, no DATDNE, or no status) posts nothing, times out after 1000 ticks, fails, and leaves the mode word B14+1124 cleared, so the next command is not blocked. cmdSend's mmcsd_begin_command (0xC166F8A4) waits with task_sleep(1) until the previous command's mode is 0.", "status": "inferred-static", "confidence": "medium", "evidence": ["analysis/mmc_isr_map.py (command)", "analysis/test_mmc_isr_map.py (test_commands_wait_with_a_time_out, test_data_done_posts_in_data_mode)", "docs/04-hardware-access.md \"How a command completes\""], "notes": "2026-11-14. Corrects the earlier static reading that mmcsd_wait has no time-out (argument order) and that 0xC166F90C is an unreferenced helper (it is delay-slot code of 0xC166F900). The Clock tick period, and so the time-out in ms, was not checked. Higher layers (disk_read retries, FatFs) were not run with failing commands. Later 2026-11-14: the tick is 1 ms (PRD12 = 24000 and the exact Timer_getFreq returns 24 MHz), so the time-out is 1 s. A nested ISR run first used the interrupted code's stack; fixed (ISR stack below B15), results unchanged."},
+    {"id": "HW-45", "area": "hardware", "claim": "Simulated in SmplTrek 3.2.174: the FatFs disk layer has no retry. disk_read / disk_write (0xC1682378 / 0xC1682320) reach the protocol read / write through the dispatcher 0xC1646020 by tail calls; they return 0 on success and 4 (RES_PARERR in FatFs numbering) after one 1 s time-out when a data command or a CMD12 after a multi-block transfer is not answered. An unanswered CMD13 status poll after a write is not reported (disk_write returns 0). Drive numbers other than 0 return 4 at once.", "status": "inferred-static", "confidence": "medium", "evidence": ["analysis/mmc_isr_map.py (command with DISK_READ / DISK_WRITE)", "analysis/test_mmc_isr_map.py test_disk_layer_has_no_retry", "docs/04-hardware-access.md \"How a command completes\""], "notes": "2026-11-14. What FatFs does with the error (FR_DISK_ERR, sticky file error through ABORT) is from the FatFs R0.15 source, not run; how the app reacts to FR_DISK_ERR was not traced."},
+    {"id": "HW-46", "area": "hardware", "claim": "With UART1 set up as HW-36 says and ending in the UART's internal-loopback self-test, the D1 test image receives from the panel MCU: the self-test byte comes back (LP OK), an A0 request is answered by A1 + six bytes whose last three are 01 00 06 (the MCU version SYSTEM DIAG shows), and pad messages Bn lo hi arrive continuously, about 85 per second with nothing pressed (8,123 bytes in 30 s), pad readings at rest 0-2 of 14 bits. An A0 sent about 100 ms after the link set-up (90, then B1 50 ms later, then A0 50 ms after that) was not answered within 2 s; the A0 repeated 2 s later was. The runs that received nothing (3, 4, 6, and 5) each sent their only A0 at once after the set-up.", "status": "observed-device", "confidence": "high", "evidence": ["D1 run 7, 2026-11-14, image 0.2.9: status page at 30 s, photographed (MCU 01 00 06 A0 2, MSG 506 1 0, RX 8123 00 LP OK, PAD 2 0002); SYSTEM DIAG photographed (MCU v1.0.6)", "operator report: RX and PAD lines moving constantly, pad readings 0-1 at rest", "experiments/sessions/D1-hello.md \"Run 7\""], "notes": "2026-11-14. Answers HW-36: the receiver set-up (the stock's traced sequence, polled) was right all along; the MCU does not act on a request sent within about 100 ms of the link coming up, and the stock's own A0 follows its power check and card set-up (0.5 s or more later). Not separated: whether 90 and B1 are needed, whether pads stream without any A0, the readiness time within 0.1-2.1 s, and whether the loopback toggle itself matters (the set-up is otherwise 0.2.8's). The pad message count is shown modulo 1000 (506 = 2,506); the per-channel share of the 85 messages/s is not counted. First device evidence for HW-39's A1 layout (bytes 3-5 = version). 2026-11-17: the \"about 85 per second\" undercounts what the MCU sends: M1 measured 4192-4196 Bn messages per second at rest, 16 channels at about 262 each (HW-55). 0.2.9 polled UART1 from its main loop only, so the FIFO overran (inference)."},
+    {"id": "HW-47", "area": "hardware", "claim": "On the SmplTrek with the D1 test image 0.2.9: the STEP buttons are bits 32-47 of the 48-bit switch word, STEP n = bit 31 + n (STEP 1-8 = bits 32-39 = matrix row GP2[4] columns 0-7, STEP 9-16 = bits 40-47 = row GP2[5] columns 0-7); the pad channel indices are 0 = TRK 8, 1 = TRK 1, 2 = TRK 9, 3 = TRK 2, 4 = TRK 10, 5 = TRK 3, 6 = GLOBAL 1, 7 = TRK 4, 8 = GLOBAL 2, 9 = TRK 5, 10 = GLOBAL 3, 11 = TRK 6, 12 = USB AUDIO, 13 = TRK 7, 14 = EXT SRC (the pads as labelled on the SmplTrek); each encoder detent is four quadrature edges (the test image counted four per detent, the stock one, HW-37); a C1 a b c v LED message with v = 11 or more lights the neighbouring LED as well, so one LED takes 0-10; after the firmware releases the power hold (GP4[11] low) the unit stays on while the power key is held and switches off on its release.", "status": "observed-device", "confidence": "high", "evidence": ["D1 run 7, 2026-11-14, operator report (STEP 1 = 0001, 2 = 0002, 3 = 0004, 8 = 0100, 9 = 0200 in the first KEY field; four counts per detent; the neighbouring LED from value 0xB; BYE stays until the key is released)", "experiments/sessions/D1-hello.md \"Run 7\""], "notes": "2026-11-14. STEP order and the pad table from the operator's reading of the KEY and PAD lines (2026-11-14). The pad table is the stock's track table (tracks 0-9, GLOBAL 10-12, USB 13, EXT 14, 01-platform-map.md) interleaved: odd channels TRK 1-7, even channels TRK 8-10, GLOBAL 1-3, USB AUDIO, EXT SRC. Corrected the same day: a first write-up invented labels TRK 8-14 for the even channels. TRK 8 lighting at start as the stock's pad 0 LED (HW-38 table) fits the same numbering. LED addresses and colours: HW-48. The LED range is an inference from the spill (eleven levels, or an eleven-entry table overrunning into the next channel); encoder D changes the brightness below 11 (run 6). The power behaviour fits the key feeding the supply in parallel with the hold line (inference)."},
+    {"id": "HW-48", "area": "hardware", "claim": "On the SmplTrek, C1 a b c v lights the LED the static pad table (04-hardware-access.md 'Panel LEDs', panel_map.py) assigns to (a, b, c), with pad_rgb_set's v1 = red, v2 = green, v3 = blue: (0,1,0) TRK 4 blue, (0,1,1..3) TRK 2 green/red/blue, (0,1,4..6) TRK 9 green/red/blue, (0,2,0) USB AUDIO green, and (0,1,7), which is in no pad, lights nothing. The row-0 addresses on plane 0 are (0,0,0) VOL L, (0,0,1) VOL R, (0,0,2) the microphone LED, (0,0,3) (0,0,4) (0,0,5) the VALUE encoder's blue, green, red; (0,0,6) and (0,0,7) light nothing; plane 1 of row 0, (1,0,0..7), lights the same LEDs as plane 0. The two-channel LEDs are green at even c and red at c + 1: (0,3,0/1) STEP 10, (0,3,2/3) STEP 3, (0,3,4) STEP 4, (0,3,6) STEP 5, (0,4,0) STEP 6, (0,4,2) STEP 15 (green at even c).", "status": "observed-device", "confidence": "high", "evidence": ["operator's sweep with D1 0.2.9 (VALUE sweep, D below 11), 2026-11-14, indices 0-16 (experiments/sessions/D1-hello.md 'LED address table')", "pad channels from HW-47's table; nine of nine pad readings equal panel_map.py's table"], "notes": "2026-11-14. The 45 pad addresses count as observed through the static table and the nine readings; Closed the same day: a static trace of the stock's g_step_led_setters table (0xC16EB448; 04-hardware-access.md 'Panel LEDs'), all six device anchors in place; the operator checked the ten button LEDs on the unit against its predictions (CLR, FUNC, HOME, MIXER, STOP, OK, REC, PROJECT, EDIT, PLAY). Spot check the same evening: index 36 = STEP 16, 72 = STEP 1, 140 = STEP 9, all as the table says (nine of sixteen seen, both plane-2 entries among them). Plane-2 addresses mostly light dimly and some light several buttons; at (2,5,4) the EDIT LED (1,5,4) glowed faintly too: crosstalk between planes at the same (b, c) (inference: one time-multiplexed driver, not three chips). Plane 2 of row 0 unobserved. The colour mapping is the first device evidence for which pad_rgb_set channel is which colour. 2026-11-14 later (static and simulated): the stock's STEP table is g_step_led_setters (0xC16EB448), entries {red, green} per step; green for STEP 1-16 at (1,3,0) (1,3,2) (0,3,2) (0,3,4) (0,3,6) (0,4,0) (1,4,2) (1,4,4) (2,5,4) (0,3,0) (2,5,6) (1,3,4) (1,3,6) (1,4,0) (0,4,2) (0,4,4), red at c + 1; the six swept anchors agree. (2,5,4/6) are STEP 9 / 11, not mode buttons. Mode-button LEDs predicted in 04-hardware-access.md 'Panel LEDs' (inference). Button LEDs checked on the unit by the operator the same day (green channel, VALUE sweep): 38 (0,4,6) CLR, 40 (0,5,0) FUNC, 42 (0,5,2) HOME, 44 (0,5,4) MIXER, 46 (0,5,6) STOP, 86 (1,4,6) OK, 88 (1,5,0) REC, 90 (1,5,2) PROJECT, 92 (1,5,4) EDIT, 94 (1,5,6) PLAY; with STEP 1-16 this accounts for all 26 two-channel LEDs, and the octave buttons have none."},
+    {"id": "HW-49", "area": "hardware", "claim": "In SmplTrek 3.2.174 the stock drives the row-0 LEDs from two places: ClippingLED's PWMEvent handler (clipping_led_apply 0xC166CC00) lights VOL L, VOL R or the microphone LED (c = 0, 1, 2) by its channel (0/1) and REC SRC (channel 0: microphone for source 0, nothing for 4-6, VOL L otherwise; channel 1: VOL R for 4-8 and 11-25, nothing otherwise), and the TEMPO LED (tempo_led_apply 0xC1683AEC, started only when g_settings+0x108 is on) flashes the VALUE encoder blue only in mode 1 (sequencer precount, AppTestMode) and all three channels otherwise. Mode pages light their button green 6 on entry (slot 13) and clear it on exit (slot 1); the page of the button's FUNC function lights it green 3 + red 6 (orange): HOME/SYSTEM MENU, MIXER/FX, REC/sample save-as, PROJECT/pool, EDIT/rec src.", "status": "inferred-static", "confidence": "high", "evidence": ["c6sim, 2026-11-14: clipping_led_apply run for channels 0/1, events 0/1/3 and REC SRC 0-25; tempo_led_apply for B14+1324 = 0-3; 19 page methods (vfunc_13 / vfunc_1) run with outside calls stubbed and led_set hooked (04-hardware-access.md 'Panel LEDs')", "LED names from HW-48 (operator's sweep); RTTI names ClippingLED::initialize() lambda and the PWMEvent std::function types; SmplTrek v3 Reference Manual p. 38 ('The button lights orange') and p. 8 (FUNC pairs)"], "notes": "2026-11-14. Not traced: what posts ClippingLED's events (level threshold or timer), who writes the B14+1054 gate byte (0xC15F3288 has no static caller), and the exact meaning of MainDelegate slot 15's arguments (mode = 1 unless its first argument is 1 and the word at B4 is not positive; inference: white on the bar's first beat). Corrects 04-hardware-access.md's earlier 'who drives' rows for row 0, which named 0xC166C820 and 0xC1683A00 (wrong function boundaries in led_callers.py, whose start list holds only callp targets and symbols). 2026-11-15 (simulated): MainDelegate slot 11 lights FUNC green 6 while func is held; func + PLAY turns PLAY green 3 + red 6 and func + STOP turns STOP green 3 + red 6 (rewind / fast forward, manual p. 8); releasing PLAY or STOP clears it when nothing plays. During playback 0xC16459F0 sets PLAY green 6 and STOP red 6 + green 6 (stop_led_set_rg 0xC15F3194), and clears all three on stop. CLR and OK have no setter call or pointer outside the clear-all functions (static). The B14+1054 gate byte is 1 in the start-up data and its only writer (0xC15F3284) has no call, branch or pointer, so the TEMPO LED gate is always open. Clip trigger (static, 2026-11-15): the input meter 0xC15F1340 (from audio_render_main while REC SRC < 12) calls 0xC166CD90(channel) when a channel peak exceeds 0.70795 (0x3F353BEF, -3.0 dBFS), after a 12000-frame hold-off (B14+852) that AppAudioInputSetting slot 8 resets through 0xC15F1BB0."},
+    {"id": "HW-50", "area": "hardware", "claim": "SmplTrek 3.2.174 opens its factory test mode (AppTestMode, static object 0xC15035C0) when FUNC (switch bit 19) is held at power-on: the start path loads g_control_switch_state (0xC1501DF0) at 0xC154A9C0 and, with bit 19 set, branches to 0xC154AA94 / 0xC168EFE4 instead of the normal 0xC154A5CC. The test path is taken at about 0.58 s, during the power-key hold, before the startup delay and before the USB start. The menu is a 3 x 3 grid: TEST MODE (title), LED, SWITCH, ENC, ADC, AUDIO, CARD, USB MSC, MIDI; the cursor buttons move the selection (bits 17 up, 18 right, 24 left, 25 down) and OK opens the page (OK on LED gave LED TEST: MANUAL / AUTO, RED / GREEN / BLUE levels).", "status": "inferred-static", "confidence": "high", "evidence": ["Static: the bit-19 test and branches at 0xC154A9C0-0xC154AA1C (dis6x); AppTestMode vtable 0xC16BF640 materialised by its constructor at 0xC1549B4C with the object 0xC15035C0; that object loaded at 0xC154AA1C on the bit-19 path", "Emulator, 2026-11-15 (emulator, unmodified stock, no guest hooks, strict mode): with key 19 held from power-on the current controller (0xC16F367C) becomes 0xC15035C0 and the OLED shows the TEST MODE grid; without it the normal start path runs and the controller is home 0xC15037F0. Navigation observed by pressing each of keys 0-31 and turning each encoder (encoders and STEP 1-8 do not move the menu)", "Bit labels from g_control_switch_state (symbol file; AppTestControl::draw matched to the manual)"], "notes": "2026-11-15. Corrects an earlier note that the entry combination was unknown. Not yet seen on the unit (it was running a test image at the time). What each page writes is not traced: CARD ('CARD PERFORMANCE TEST') and AUDIO ('SmplTrekTestAudio.wav') may write the card, USB MSC exposes it; use a spare card. How the pages exit is not traced (CLR and HOME stayed in LED TEST in the emulator). Later 2026-11-15: every page's controls read from its handlers and checked in the emulator (docs/09-factory-test-mode.md). CLR press closes a page (AppTestMode 0xC1630EE0 handles CLR itself, code 1, and forwards all other buttons); one early run where it did not is unexplained. CARD writes the card: it creates Loop001.wav in the root, writes and reads about 1 MB, then deletes it (emulator, fsck clean). AUDIO only reads the card (looks for SmplTrekTestAudio.wav), starts USB and unmutes the codec."},
+    {"id": "HW-51", "area": "hardware", "claim": "SmplTrek 3.2.174's control_switch_poll filters keys only on release, and only for bits 0-31. One matrix row is read per poll (the 1 ms input task), so each key is sampled every 6 ms. Counted in scans of the key's own row, at every starting phase: a press is taken on the first closed scan, so a closure seen by a single scan registers (no press debounce, latency 0-6 ms); bits 0-31 (rows 0-3) are released after two consecutive open scans (6-12 ms) and a single open scan while held is ignored; bits 32-47 (rows 4-5, STEP 1-16) are released on the first open scan (0-6 ms), so a single open scan while held gives a release and a new press. Auto-repeat starts 400 ms after a press, then every 100 ms.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/input_map.py Session.key_timing (control_switch_poll 0xC16534C0 on g_control_switch_scanner 0xC1501DB0, with a delegate at +24 as MainDelegate installs) and test_input_map.py test_key_debounce: one key per row pinned; all 48 keys run on 2026-11-15 split exactly into bits 0-31 and 32-47", "1 ms poll: 04-hardware-access.md 'Key matrix'; repeat delays: control_switch_repeat_start / control_switch_repeat_tick evidence in symbols/smpltrek-3.2.174.json", "c6sim checked against TI-compiled C (TOOL-4)"], "notes": "2026-11-15. Simulation, not device: the physical contact-bounce time of the buttons is not measured. The split at the 32-bit word boundary suggests the release filter works on the low 32-bit word only (inference; the mechanism, apparently a short history of earlier readings from scanner+32, was not decoded). The stock app thus relies on the 6 ms sample spacing as its only press debounce. 2026-11-17: physical bounce measured for STEP 1 only (HW-56): worst settle 784 us, far under the 6 ms sample spacing."},
+    {"id": "HW-52", "area": "hardware", "claim": "At the jump to SYSTEM, BOOT 1.0.17 leaves L2CFG = 0 (L2 all RAM, no L2 cache), L1PCFG = 4 (32 KiB L1P cache), L1DCFG = 3 (16 KiB L1D cache, 16 KiB L1D RAM at 0x11F00000) and MAR 17, 128, 192-195 and 199 cacheable (196-198 not). It performs no cache operation at the hand-over, invalidates only its own header buffer while loading, and uses neither L2 nor L1D RAM.", "status": "observed-device", "confidence": "high", "evidence": ["M1 bench session, 2026-11-16, image 0.3.1 (bare-metal test image, not published; SHA-256 6479376788a7bf96c6d68ddcbb0c51b43c5354508eb93afaf06bea050613f7e6), step B1: L2CFG 01010000, L1PCFG 4, L1DCFG 3, MAR17 1, MAR128 1, MAR192-199 11110001; the image never writes these registers and reads them first in main; photographed; experiments/sessions/M1-bench.md \"Results\"", "analysis/boot_cache.py and test_boot_cache.py: the bootloader cache start-up 0xC70996A0 run in c6sim on the A4 dump sections", "hand-over branch 0xC708A0B4; reader 0xC7094E40; unreferenced MAR thunks 0xC70A32AC / 0xC70A32B8", "docs/05-bootloader.md, Cache state at the jump"], "notes": "2026-11-15. Simulated and read, not observed on a unit. Update 2026-11-15: the flash read is EDMA with no cache operation (HW-53). 2026-11-17: the register values observed on the unit (M1 B1). L2CFG reads 0x01010000: L2MODE (bits 2:0) is 0 as claimed; bits 16 and 24 are the read-only MMID and NUM_MM fields per SPRUFK5 (inference: identity, not configuration). The second sentence (no cache operation at the hand-over, no use of L2 or L1D RAM) is still static only."},
+    {"id": "HW-53", "area": "hardware", "claim": "SPI flash reads go by EDMA in both SmplTrek 3.2.174 and BOOT 1.0.17: do_read sends 03 + address, then SPIDriver read with flag 1 sets SPIINT0 DMAREQEN and two EDMA transfers (receive on event 14 from SPIBUF into the buffer, TCINTEN with TCC 14; transmit on event 15 repeating the buffer's first byte into SPIDAT1), in chunks of at most 65535 bytes, waiting on the driver's event. Neither driver performs a cache operation on the destination.", "status": "inferred-static", "confidence": "high", "evidence": ["app: do_read 0xC15DF488, SPIDriver vtable 0xC16CF788 slot 2 0xC1626A08 -> 0xC1626990, transmit set-up 0xC1626564, receive set-up 0xC1626638, polled variant 0xC1626900", "bootloader: do_read 0xC70869E0, vtable 0xC70A8908, slot 2 0xC708AA88 -> 0xC708AA10, set-ups 0xC708A6B0 / 0xC708A784", "docs/04-hardware-access.md SPI flash on SPI0; docs/05-bootloader.md Cache state at the jump"], "notes": "2026-11-15. Read from the disassembly, not run. Event numbers per the C6748 EDMA event map (SPI0 14/15, SPI1 18/19), consistent with the code choosing 14/15 for base 0x01C41000."},
+    {
+      "id": "XF-1",
+      "area": "cross-flash",
+      "claim": "A stock Lofi-12 XT 1.5.205 system image rewrapped with family word 5 and SmplTrek seeds is accepted to the confirmation screen, with foreign section load addresses (0xC2B8..) and a lower version number. The sterilised variant (4 patched bytes) is also written, verified, booted and run on the SmplTrek, BOOT MODE DIAG accepts it, and the official restore from it works.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["W1, experiments/README.md 'Cross-flash pre-write probes' (CLR pressed, nothing written)", "C3, 2026-11-11 (experiments/sessions/C3-crossflash.md): confirmation V3.2.174 -> V1.5.205, Update completed, Lofi SYSTEM INFO (BOOT 1.0.17, SYSTEM 1.5.205, MCU 1.0.6), DIAG SYSTEM v1.5.205 OK, restore V1.5.205 -> V3.2.174, DIAG all OK; photographed"]
+    },
+    {
+      "id": "XF-2",
+      "area": "cross-flash",
+      "claim": "A foreign app's flash writes are limited to the settings blocks (same writer helper in all three products).",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["call-site analysis of request_erase/request_program, 2026-11-09 (docs/01-platform-map.md 'Flash use by the app')", "CyDrums 1.1.84: all 4 erase/program call sites are in settings_save 0xC24C4458 and its helper (symbols/hand/cydrums-1.1.84.json, 2026-11-10)"],
+      "notes": "Checked for SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84. Call sites found by target address in objdump; no address constant points at the driver entries. Correction 2026-11-10: request_erase and request_program were named the wrong way round in the symbol files (request_program = SmplTrek 0xC15DF988, type 2; request_erase = 0xC15DFA64, type 3); the four call sites and this claim are unchanged."
+    },
+    {
+      "id": "XF-3",
+      "area": "cross-flash",
+      "claim": "Lofi-12 XT 1.5.205 reads flash at exactly five call sites: settings_load (4 KiB at 0x01FFF000, else 0x01FFE000), the settings writer's read-back verify, and flash_headers_request (128 bytes each from 0x0003FFE4 'bmtd' and 0x00040000 'mmtd', shown on SYSTEM INFO). It reads no content partitions.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["request_read call sites in work/lofi-1.5.205.dis (0xC2C8B040, 0xC2C8B24C, 0xC2C8B2A4, 0xC2C8B320, 0xC2C8B34C), symbols/hand/lofi-12xt-1.5.205.json", "docs/01-platform-map.md 'Flash use by the app' (2026-11-10)"],
+      "notes": "Was open. On SmplTrek flash the settings tag check passes, so Lofi copies 404 bytes of SmplTrek's PREF block and clamps the fields; the 120 bytes after SmplTrek's 284 are erased flash (0xFF): SmplTrek's writer erases the sector and programs only the 284-byte struct, tag last (settings_sector_write_verify, read 2026-11-10). Indirect calls through a pointer to request_read are excluded only by the absence of address constants. CyDrums (not a C3 target) has code that reads device 1 from offset 0, but its three requesters are unreferenced (probably dead code, 2026-11-10)."
+    },
+    {
+      "id": "XF-4",
+      "area": "cross-flash",
+      "claim": "The panel input layer is the same across products: identical button bit map and pad count in all three button-test pages, identical panel UART code; pad sensor processing is product-specific (CyDrums adds a fourth velocity curve).",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["docs/01-platform-map.md (2026-11-10, region_diff comparison across all three products)"],
+      "notes": "Remaining doubt: MCU firmware images themselves never compared (no non-SmplTrek MCU dump); protocol-level identity makes incompatibility unlikely. 2026-11-14: the DSP side needs nothing beyond the shared protocol. Same send routine and the same nine senders in all three (no extra MCU command in any product), one UART1 base reference each (the same helper), identical parser; each pad_sensor_update reads only (channel, value), its own record and the pad delegate, with the same 800 / 100 thresholds. Remaining unknown: the foreign MCU firmware's analogue scaling (affects feel, not function; not checkable from the DSP code)."
+    },
+    {
+      "id": "XF-5",
+      "area": "cross-flash",
+      "claim": "No caller uses the settings writer's return value: settings_save has two entries in each product (direct call SmplTrek 0xC154AE60 / Lofi 0xC2BAD7B8, and settings_reset_and_save), and A4 is overwritten right after both (tick_count, or a getter). A writer patched to return at entry cannot trigger a retry; `mvk 0, a4; b b3; nop 5` remains the recommended patch.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["internal review, 2026-11-10: at a function entry A4 holds the first argument (often a 0xC1xxxxxx pointer, negative as int32), so a bare return would hand callers an error-like value; the callers had not been read", "symbols/smpltrek-3.2.174.json settings_save / settings_reset_and_save; hand files for Lofi-12 XT and CyDrums", "docs/01-platform-map.md 'Flash use by the app' (2026-11-10)"],
+      "notes": "Was open. Corrects 'single caller'. The unpatched writer returns the last flash status value, not a status code. Correction 2026-11-11: in Lofi-12 XT the entry 0xC2C8B0F8 is two 16-bit instructions at the end of a compact fetch packet (header at 0xC2C8B0FC), so the patch must be the 16-bit pair mvk .L1 0,a4 (0x0626) and bnop .S2 b3,5 (0xA1EF), not three 32-bit instructions (docs/01-platform-map.md 'Where the patch has to fit'). CyDrums 1.1.84 (2026-11-12): same layout and the same pair at 0xC24C4458 (header 0xEBC00050 at 0xC24C445C), file offset 0xACBF8 in CyDrums.bin; locally built images are checked with tools/patches/check_sterilised_cydrums.py (read-only; --decode compares the whole fetch packet with tic6x objdump)."
+    },
+    {
+      "id": "XF-6",
+      "area": "cross-flash",
+      "claim": "Every PREF field the validators know is range-clamped on load. SOURCE (+0x04), POLARITY IN/OUT (+0x08/+0x0C), SPEAKER MUTE (+0x48), metronome volume (+0x4C), precount (+0x50) and pad velocity (+0x54) have the same offsets in SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84; from the 8-word array (+0x8C / +0x90) through TEMPO LED, Lofi-12 XT and CyDrums are SmplTrek plus 4 bytes. A foreign PREF block therefore produces wrong but in-range settings, apart from the few unclamped words.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["docs/01-platform-map.md 'PREF fields' (2026-11-10): validator clamp calls decoded per execute packet, helper ranges evaluated and hand-checked for SmplTrek, page rows resolved to their accessors", "settings_validate entries in symbols/smpltrek-3.2.174.json and the Lofi-12 XT / CyDrums hand files"],
+      "notes": "Ranges and defaults differ for some shared fields (precount, pad velocity). Unlabelled fields are listed with ranges only. Semantics of values beyond the page labels are not decoded."
+    },
+    {
+      "id": "XF-7",
+      "area": "cross-flash",
+      "claim": "SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84 have the same static interrupt configuration: nine Hwis (int 4 I2C0, 5 EDMA3 CC0, 6 McASP0, 7 GPIO bank 7, 8 UART0, 9 UART1, 11 MMCSD0, 12 USB0, 14 Timer64P0) with the same handler code, and the same two Swis (audio at priority 14, Clock at 15). The Hwis are configured statically, not created at run time.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["docs/01-platform-map.md 'Interrupts and Swis' (2026-11-10): Hwi module state, dispatch tables and objects read from copy-table data with init_data.py in all three; handlers compared with region_diff; Swi objects found by scanning copy-table data", "symbol files: g_hwi_module_state, g_hwi_objects, *_isr, g_audio_swi_object, g_clock_swi_object", "Simulated hwi_module_startup in all three (analysis/c6sim.py, 2026-11-12): identical INTMUX1-3 (0x483D0824, 0x0F002E26, 0x00040013) and IER 0x5BF3, decoded with TI SPRUFK5A 7.5.3"],
+      "notes": "Corrects an earlier reading that the Hwis are created at run time. CyDrums' uart_isr is scheduled differently (same constants). Graphics event bits and the AudioFileControlTask commands are not decoded."
+    },
+    {
+      "id": "XF-8",
+      "area": "cross-flash",
+      "claim": "Power management is the same platform code in SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84: one power-manager object polled from IOObserver::run, power key on GP3[0] (held over 1 s = power-off request), power hold on GP4[11] (cleared last in the power-off sequence), power source on GP3[7], battery voltage on panel analogue channel 15, and MainDelegate's six PowerManagerDelegate slots with the same roles. Product differences: AUTO POWER OFF value 1 is 20 min in Lofi-12 XT (30 min in the others), and the power-off message handler is compiled differently (same tail: settings_save, 1 s wait, graphics_task_stop, power-hold release).",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["docs/01-platform-map.md 'Power management' (2026-11-10): region_diff over SmplTrek 0xC1646AC0-0xC16470B0 (431 instructions, only data-page offsets differ, pin constants included); IOObserver::run, the delegate slot bodies, battery_set_type with its tables and auto_power_off_apply compared or read in all three", "symbol files: g_power_manager, power_*, battery_*, MainDelegate::power_*, MainDelegate::handle_power_message (hand files for Lofi-12 XT and CyDrums)"],
+      "notes": "Pin roles are inferred from use (no schematic). Whether the boot loader already drives GP4[11] is open: power_on_check sets it only when the key is still held. Answered 2026-11-12 (D0, HW-24): the bootloader latches it. Corrects the symbol-file note that input_activity_mark compares against 30000 (that is power_low_battery_tick)."
+    },
+    {
+      "id": "XF-9",
+      "area": "cross-flash",
+      "claim": "The SD card layer is the same code in SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84: FatFs diskio calls HAL::SDDriver directly (drive 0), transfers block on a SYS/BIOS Event posted by mmcsd0_isr, card detect is GP4[0] (active low) polled by IOObserver::run every 64 ticks with a 500-tick insertion debounce, and a static std::function observer (MainDelegate's handleCardStateEvent lambda) mounts and unmounts the card in the IOObserver task.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["docs/01-platform-map.md 'SD card' (2026-11-10): region_diff over diskio, the SD driver, the card manager, the MMCSD wait/post helpers and the card-reader mode functions (only moved data addresses and data-page offsets)", "symbol files: g_sd_driver, disk_*, HAL::SDDriver::*, sd_*, card_mount / card_unmount, MainDelegate::card_state_lambda (hand entries for Lofi-12 XT and CyDrums)"],
+      "notes": "The mount function differs in CyDrums (extra work after f_mount, not read). The protocol layer's origin (StarterWare-style mmcsd_proto) is unconfirmed; the per-bit roles in mmcsd0_isr are not decoded."
+    },
+    {
+      "id": "XF-10",
+      "area": "cross-flash",
+      "claim": "USB MIDI input (usb_midi_rx_callback, MIDIStreamUSB::receive and the MainDelegate MIDI handlers it reaches) runs in the USB task, not in the USB0 interrupt, in SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84: the interrupt path (StarterWare usblib USB0DeviceIntHandler / USBDeviceIntHandlerInternal) hands the data to a usblib tUSBBuffer and posts a non-blocking mailbox message; usb_task_loop -> usb_task_dispatch -> the class endpoint handler (context 0) calls the receive callback. The USB code is the same in all three.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["docs/01-platform-map.md 'USB' (2026-11-10): packet-level reading of usb0_isr, USB0DeviceIntHandler, USBDeviceIntHandlerInternal, usb_task_dispatch, usb_midi_endpoint_handler (both context paths) and usb_midi_rxbuf_callback; region_diff over each (only moved data and data-page offsets)", "StarterWare 1.20.04.01 usblib/device/usbdhandler.c, usbdenum.c, include/usblib.h (tCustomHandlers order) compared by body"],
+      "notes": "Not observed on hardware (BIOS_getThreadType in a hook would upgrade it). Corrects an earlier assumption that USB MIDI handlers run in interrupt context, and the symbol note that 0xC162DD44 calls usb_midi_rx_callback (it calls the tUSBBuffer callback). That 0xC164AC00 is usblib's USBBufferEventCallback is inferred from the tUSBBuffer it receives."
+    },
+    {
+      "id": "EXE-1",
+      "area": "code-execution",
+      "claim": "An appended 8th mmtd section at 0xC3F00000 is loaded by the bootloader and its code executes: custom text was drawn via the stock draw_text.",
+      "status": "observed-device",
+      "confidence": "medium-high",
+      "evidence": ["operator report 2026-11-09/10 (experiments/README.md S2 results)", "photographed 2026-11-11 (first and layout-v2 revisions), repeated cold boots, then official 3.2.174 restored and photographed (experiments/README.md, S2 ledger)", "image hashes recorded in the S2 ledger"],
+      "notes": "Device session S2 (2026-11-09 to 2026-11-11). The test images are not published."
+    },
+    {
+      "id": "EXE-4",
+      "area": "code-execution",
+      "claim": "0xC16FFA98-0xC4000000 is statically unclaimed by sections, copy table and visible constants; the 4 KiB at 0xC3F00000 is a candidate, NOT a proven-free runtime region.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": ["analysis/memory_map.py", "S2 probe, 2026-11-09/10: a 4 KiB section loaded at 0xC3F00000..0xC3F01000 (zero padding and a 128-byte guard line), about 1 MiB below 0xC4000000; no allocator reservation recovered"],
+      "notes": "Sentinels detect only some post-load overwrites."
+    },
+    {
+      "id": "EXE-2",
+      "area": "code-execution",
+      "claim": "Redirecting one vtable word (AppSystemInfo slot 15) is a sufficient hook: the replacement runs with the page's draw context and can tail-call the original.",
+      "status": "observed-device",
+      "confidence": "medium-high",
+      "evidence": ["same session as EXE-1", "ghidra RTTI recovery of slot 15 as the title method"],
+      "notes": "Same photo-pending caveat as EXE-1."
+    },
+    {
+      "id": "EXE-5",
+      "area": "code-execution",
+      "claim": "Stock API signatures used so far: draw_text(canvas A4, text B4, Point* A6, grey B6, mode A8); Cache_wbInv(addr A4, bytes B4, type A6, wait B6); request_read(driver, addr, buf, len, -1) synchronous from task context only.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["symbols/smpltrek-3.2.174.json entries with evidence and byte prefixes", "docs/11-abi.md"]
+    },
+    {
+      "id": "EXE-3",
+      "area": "code-execution",
+      "claim": "mmtd sections are raw (uncompressed, unencrypted) C674x images; section count and load addresses are free within DDR and accepted by the loader.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["section size/address arithmetic across all files", "EXE-1 (8th section accepted)"],
+      "notes": "Address-range acceptance beyond 0xC3F00000 untested; no load-address validation seen pre-confirmation (W1)."
+    },
+    {
+      "id": "AUD-13",
+      "area": "audio-engine",
+      "claim": "SmplTrek 3.2.174 mix routing: audio_mix_main renders the ten sequencer tracks and three GLOBAL tracks through g_track_table (audio_mix_tracks -> audio_track_render -> TrackInterface render, vtable +12) into two scratch blocks per track; each track's dry block is added into out (which then passes the send and master effect stage and the gain ramp) and its send block into g_send_bus (the send effect input). USB AUDIO (13) and EXT SRC (14) add their dry output to g_post_bus instead, which audio_render_main adds at unity after audio_mix_main, so they bypass the master stage. While audio_preview_active() is set, audio_preview_mix replaces the track mix and MainDelegate's MIDI handlers skip their normal path.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": ["symbols/smpltrek-3.2.174.json entries audio_mix_main, audio_mix_tracks, audio_track_render, audio_mix_usb, audio_mix_ext, g_track_table, g_post_bus, g_send_bus (2026-11-10, packet by packet with the RS-fixed objdump)"],
+      "notes": "Gains (track +20 float, B14+1008), the per-track g_mixer_channels processing, the one-index special path in audio_mix_tracks and the master effect's argument roles are not read. 'Bypass the master stage' rests on call order. The preview-mode name is an inference from the callers (audio-file pages)."
+    },
+    {
+      "id": "TOOL-1",
+      "area": "tools",
+      "claim": "GNU objdump 2.42 (tic6x) mis-decodes compact MV and compact CMPGT/CMPLT in fetch packets whose header has the RS bit set: it applies RS to the 5-bit register field of MV (printing one register 16 too high, e.g. a27 for a11 or b38) and to the 1-bit predicate destination of the compares (a16/b16 for A0/B0). tools/toolchain/patches/binutils-2.42-tic6x-compact-rs.patch limits RS to 2- and 3-bit fields; the patched listings agree with Ghidra on every compact instruction of SmplTrek 3.2.174.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": ["Ghidra 12.1.4 + ghidra-c6000 dump of all 127,204 compact instructions of SmplTrek 3.2.174 compared with objdump: 495 MV differences before (all in RS=1 packets, 0 in RS=0), 0 after", "binutils-2.42 opcodes/tic6x-dis.c and include/opcode/tic6x-opcode-table.h (lsdmvto/lsdmvfr composite src2/dst; lx1c dst is OWREG1, not OWREG1NORS)"],
+      "notes": "Corrected lines: 558 / 346 / 588 in SmplTrek 3.2.174 / Lofi-12 XT 1.5.205 / CyDrums 1.1.84 (MV) plus 15-20 compares. Readings made before 2026-11-10 that depend on a compact MV in an RS=1 packet should be rechecked."
+    },
+    {
+      "id": "TOOL-2",
+      "area": "tools",
+      "claim": "GNU objdump 2.42 (tic6x) mis-decodes the stage/cycle operand of the compact (16-bit, Uspk) SPKERNEL: include/opcode/tic6x-insn-formats.h assembles the 6-bit field as bit 0, bits 9-7, bits 15-14 (low to high), where TI SPRUFE8B Figure H-7 has bits 9-7 = field[2:0], bits 15-14 = field[4:3] and bit 0 = field[5]. The printed fstg/fcyc of compact SPKERNELs is therefore wrong (Lofi-12 XT 0x1C67 at 0xC2BF71B2, fstg 1 at ii 1, prints 'spkernel 32,0'). The 32-bit form is decoded correctly.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["TI SPRUFE8B (C674x CPU and Instruction Set, July 2010) Figure H-7 and Tables 3-28 / 3-29; binutils-2.42 tic6x-insn-formats.h nfu_uspk COMPFLD and tic6x-dis.c fstg/fcyc printing (bit reversal by ii)", "binutils' own compact SPLOOP ii extraction in tic6x-dis.c reads bits 9-7 as ii[2:0] and bit 14 as ii[3], consistent with Figure H-7, not with its Uspk field", "analysis/c6sim.py decodes SPKERNEL from the opcode; test_c6sim.py checks the 32-bit decoding against objdump on every instance in Lofi-12 XT and the compact case at 0xC2BF71B2"],
+      "notes": "Affects every compact SPKERNEL with a non-zero field: 82 of Lofi-12 XT 1.5.205's 869 compact SPKERNELs (printed 32,0 x42, 3,0 x16, 1,0 x8, 0,1 x6, 38,0 x3, and single others); their objdump operands should not be trusted. Not confirmed on hardware; the bit order is from TI's figure. Not patched in tools/patches (listings unchanged)."
+    },
+    {
+      "id": "TOOL-3",
+      "area": "tools",
+      "claim": "CyDrums 1.1.84's start-up table initialiser 0xC253FA24 is a nested software-pipelined loop ([b2] SPLOOPD 7, SPMASKR in the post-loop code, RILC 22, outer count 2). Simulated with the SPRUFE8B 7.9.6 reload rules, it writes 2 x 22 entries of four halfwords at 0xC2427108 (rows 176 bytes apart): for record i at 0xC26851D8 + 200 i with count n = word(record), entry i holds the halfwords at record +12, +60, +108 and +156 for the first n of them (n capped at 4) and 0 for the rest; both rows are filled from the same 22 records.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["analysis/c6sim.py nested reload (SPRUFE8B 7.9.6: condition 4 cycles before the last kernel stage boundary, ILC = RILC - 1, fetch stops after the outer branch's last delay slot)", "analysis/test_c6sim.py CyDrumsNestedReload: synthetic records with n = 0..5 against an oracle read by hand from the loop body's iteration-relative timing; negative controls (no reload: one row, 88 stores; RILC off by one: different stores)", "the image's own records (n in 2..4) give the same result as the oracle on all 44 entries"],
+      "notes": "2026-11-12. Simulation, not device. The meaning of the records and of the table is not identified. The reload model refuses SPKERNELR, RILC = 0 at reload and interrupts. sim_boot no longer stubs this function. It is not reached on CyDrums' start-up or on the card-check paths (XF-16 output identical with and without the stub; no writes to the table), so the earlier stub did not affect XF-16. Callers 0xC246EBF8 and 0xC253FE44 not traced."
+    },
+    {"id": "TOOL-4", "area": "tools", "claim": "c6sim returns the same results as the host build for TI-compiled C at six optimisation levels (cl6x 8.5.0 -mv6740: O0, O2, O3, O3 -ms3, O3 --opt_for_speed=5, O2 -ms2): 30 functions x 80 inputs each, covering 32/64-bit integer and division helpers, 40-bit forms, float and double arithmetic and division, SPLOOP/SPLOOPD/SPLOOPW, switch tables, function pointers, structs, and size-optimised code with compact PROT packets and CALLP .S1 / A3 links.", "status": "inferred-static", "confidence": "high", "evidence": ["analysis/c6sim_diff.py (tests in analysis/c6sim_diff/tests.c, gcc build checked with UBSan); test_c6sim_diff.py runs O0, O2 and O3 -ms3 at 12 inputs", "before the simulator was fixed, 62-78 of 360 runs per level differed (double-precision word timing, CALLP A3, SPLOOPW early exit, 40-bit forms, missing ADDSUB/MPYHI/SHR2/RCPDP)", "every analysis tool's output (16 runs, as in HW-33) is identical under the old and the fixed simulator"], "notes": "2026-11-13. Covers what TI's compiler emits, not hand-written assembly (SYS/BIOS and RTS assembly parts are only covered where the tests call them). Not modelled, and refusing to run on: interrupts, nonzero AMR (circular addressing), FADCR/FMCR rounding modes, SPKERNELR, unsigned 40-bit compares. RCPSP/RCPDP seeds are the true value truncated to 8 mantissa bits; the hardware table is not documented, so code that uses a seed without refining it may differ from the device."},
+    {"id": "LIB-1", "area": "libraries", "claim": "SmplTrek 3.2.174 links TI StarterWare 1.20.04.01 code built with CGT 8.3.9 or later at -O2 (-mv6740 --abi=eabi): rebuilt from source, 115 functions match the image byte for byte (relocated fields masked), all of usblib's usbbuffer, usbringbuf, usbdcdesc and usbdesc, half of drivers/usb.c, CPPI 4.1 DMA helpers and parts of edma, gpio, timer, interrupt, uart, mcasp, i2c and psc. 8.3.2 -O2 gives 49 of the 53 usblib matches and -O3 gives 21. Together with the RTS match (8.3.11-8.3.13), the build is CGT 8.3.11-8.3.13 -O2.", "status": "observed-file", "confidence": "high", "evidence": ["analysis/lib_match.py on objects built from ~/ti/C6748_StarterWare_1_20_04_01 with ~/ti/ti-cgt-c6000_8.3.{2,9,10,11,12,13}", "work/smpltrek-3.2.174.starterware-8.3.13.libmatch.json", "docs/01-platform-map.md 'Compiler, runtime and SYS/BIOS versions'"], "notes": "2026-11-14. Non-matching usblib files (usbdenum, usbdhandler, usbdconfig, usbdcomp, usbtick) are the Sonicware-modified ones. AM335x StarterWare has no audio device class (TI StarterWare USB wiki), so the audio and MIDI class code has no TI counterpart found."},
+    {"id": "LIB-2", "area": "libraries", "claim": "SmplTrek 3.2.174 links TI CGT 8.3.11-8.3.13 rts6740_elf.lib code unmodified: 146 library functions match uniquely at 76 addresses (relocated fields masked). 72 of those addresses are named in symbols/smpltrek-3.2.174.json (71 added 2026-11-14 plus operator_new) (memcpy, memset, memmove, sprintf, atoi, exit, abort, integer and long-long division, the float maths functions, the printf helpers, copy_in, __cxa_atexit, ...); the other 4 each hold one copy of several identical-code C++ destructors or constructors. The printf formatter 0xC1577B00 is TI's but not byte-identical (named __TI_printfi, probable). Every RTS name carried to another image by func_match lands on an exact match of the same function in that image, and every product (SmplTrek 1.0.65-3.0.148, Lofi-12 XT, CyDrums, ELZ_1 play 3.1.149, MINIMAL) contains exact 8.3.13 RTS matches.", "status": "observed-file", "confidence": "high", "evidence": ["work/libmatch-8.3.13.json (analysis/lib_match.py)", "docs/01-platform-map.md 'Compiler, runtime and SYS/BIOS versions'", "symbols/*.json and symbols/hand/*.json entries citing rts6740_elf.lib"], "notes": "2026-11-14. Functions of 64 bytes or more are confirmed, smaller ones probable, as for LIB-1. Per-image lib_match output was scratch only (not in work). The RTS version 8.3.11-8.3.13 was established 2026-11-09; the other products' exact version was not tested."},
+    {"id": "LIB-3", "area": "libraries", "claim": "SmplTrek 3.2.174 links SYS/BIOS kernel code byte-identical to SYS/BIOS 6.76.03.01 built as a custom library (BIOS.libType = Custom) with CGT 8.3.13 for ti.targets.elf.C674, and the xdc.runtime library shipped with it: with a guessed configuration (analysis/sysbios_match.cfg; logging off raised 55 to 68), 69 kernel functions match uniquely at 67 addresses (HeapMem, Mailbox_post/pend, Event_post, Swi and Task internals, the c64p Hwi dispatcher, Cache, Exception, timer64 Timer, TaskSupport), and 44 xdc.runtime functions at 41 addresses (System, SysMin, Error, Startup_exec, LoggerBuf, Text, _c_int00, _auto_init_elf). 96 are new names in symbols/smpltrek-3.2.174.json; 12 match entries named earlier from reading (HeapMem_*, Swi_post, Swi_getAttrs, Memory_alloc, Hwi_disableInterrupt; hwi_module_startup = Hwi_Module_startup, HeapMem_free_core = HeapMem_freeUnprotected, cache_block_op = Cache_block, bios_print_ring_putch = SysMin_putch). The earlier Event_post at 0xC16A516C is a wrapper that branches to the exact Event_post at 0xC167E600 (simulated), renamed event_post. In the other 13 images every carried name with an exact hit there is the same function; 385 further exact hits are in symbols/hand/.", "status": "observed-file", "confidence": "high", "evidence": ["work/smpltrek-3.2.174.sysbios.libmatch.json", "work/smpltrek-3.2.174.xdcruntime.libmatch.json", "analysis/sysbios_match.cfg (reproduces the 69)", "symbols/*.json and symbols/hand/*.json entries citing claim LIB-3"], "notes": "2026-11-14. Only SYS/BIOS 6.76.03.01 is installed, so neighbouring releases with the same code are not ruled out; the match shows the kernel source and build type, not an exact version. Config-dependent functions (Task_sleep, Semaphore_pend/post, Clock, Queue) did not match under any variant tried. src_match.py similarity is not reliable on this whole-program build (11 of 69 exact functions assigned elsewhere; tiny getters land on unrelated code), so no similarity-only names were added. Timer_setPeriodMicroSecs was carried wrongly (speculative, similarity 0.35-0.44) into 7 images; the exact hits there override it through the hand files."},
+    {
+      "id": "MEM-1",
+      "area": "memory",
+      "claim": "Copy-table decode of 3.2.174: zero-filled 0xC0000000-0xC1503404 (~21 MB static data) and 0xC4000000-0xC8000000 (64 MB, sample memory); image 0xC15052B8-0xC16FFA98; boot stack below 0xC16F1CE0.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["analysis/memory_map.py walking __TI_auto_init's copy table"]
+    },
+    {
+      "id": "XF-11",
+      "area": "cross-flash",
+      "claim": "AudioFileControlTask command sets: SmplTrek 3.2.174 0 write block, 1-3 read (2 notifies the listener, 3 synchronous), 4 seek, 5 open (wait flag or listener), 6 no-op, 7 write and close, 8 close and free, 9 write and flush, 10-12 exists / mkdir / unlink. Lofi-12 XT 1.5.205 and CyDrums 1.1.84 have the same commands without the no-op (6-11), always open synchronously, and use 608- / 576-byte stream objects (SmplTrek 72). CyDrums' write command has no card space check. The task posts 1 for success (or a nonzero FatFs result of the path commands) and -1 otherwise.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["Each product's run loop and its ten request functions (AudioFileControlTask::post_*) read packet by packet, message stores through a scratch execute-packet evaluator checked by hand (2026-11-10); docs/01-platform-map.md 'Audio file commands'", "post_* names checked against the stored command constant in every image after the first carry swapped the path requests"],
+      "notes": "Stream file part identified 2026-11-10 as AudioEngine::ExpandedWavFile (RTTI vptr stored by the constructor afc_stream_init calls, in all three). Low-space test decoded 2026-11-10: card_space_check returns 0 below 128 MiB free; the type-5 message's UI effect and the B14+676 state values are not read. AudioEngine::WavFile::open's helpers: read 2026-11-11, see XF-12."
+    },
+    {
+      "id": "XF-12",
+      "area": "cross-flash",
+      "claim": "The audio file streams write and read RIFF/WAVE files through AudioEngine::WavFile (fmt chunk must be PCM; tell/seek relative to the data chunk; flush rewrites only the RIFF size and the data header). ExpandedWavFile adds chunks: SmplTrek 3.2.174 writes a cue point and a LIST/adtl/labl 'Tempo: NNN.N' label and parses it back; Lofi-12 XT 1.5.205 and CyDrums 1.1.84 write the same plus 'ORSL' (count and up to 16 / 15 records of 32 bytes) and 'AFTG' (8 bytes), which SmplTrek lacks. SmplTrek fills the label from the project tempo word (tempo x 10, default 1200); no such call was found in Lofi-12 XT or CyDrums.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": ["Each product's WavFile helpers and ExpandedWavFile vtable slots 2 / 3 read separately (constants: chunk ids, 'Tempo: 120.0' template, field offsets; 2026-11-11); FatFs FIL offsets checked against f_read; docs/01-platform-map.md 'WAV files written and read by the streams'"],
+      "notes": "Later 2026-11-11: in Lofi-12 XT, AFTG holds the sample's tags (audio_files_save_tags, its caller shows \"SAVING TAGS\") and ORSL the slice list (audio_file_save_slices; record limit 15 in 1.1.156, 16 in 1.5.205, matching the 1.5 note \"Expand up to 16 slices\"; slice reading is an inference). The tag bit layout and slice record fields are not read; CyDrums has no direct caller of the ORSL / AFTG / tempo setters. The smpl writer present in all three has no caller found. Tempo x 10 is inferred from the default and the label format."
+    },
+    {
+      "id": "XF-13",
+      "area": "cross-flash",
+      "claim": "A Lofi-12 XT 1.5.205 app booting on SmplTrek flash range-checks every field of SmplTrek's PREF block it reads except +0x10, +0x2C, +0x34..+0x40, +0x74, +0x78, +0x80, +0x84, +0x8C, +0xB0..+0xC8, +0xE4 and +0x114. Of those, only +0x10 (sign test, SmplTrek clamps it to [0,25]) and +0x84 (zero / non-zero) have readers found, so SmplTrek's settings give wrong-but-valid Lofi settings, not wild values. It forces +0x60 = 0, +0x108 = 4, and +0x15C = 0 unless +0x10 < 0.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": ["Lofi-12 XT settings_validate 0xC2BD31AC and its clamp helpers 0xC2BD2F30..0xC2BD3190 read by hand (2026-11-11); readers searched by direct and tail calls, MVK/MVKH constants and aligned data words in the loaded sections", "SmplTrek PREF values from the A4 dump (0x01FFF000), docs/01-platform-map.md 'Lofi-12 XT reading SmplTrek's settings, field by field'"],
+      "notes": "Device, C3 2026-11-11: under Lofi the operator saw AUTO POWER OFF 6h, MIDI OUT TO off and PROJECT / AUTO / PC CHANNEL 16 / 1 / 2, exactly the predicted reads (stored 4, 0, 15 / 0 / 1); other rows not reported. After the restore SmplTrek's own settings were unchanged (operator report), so the sterilised image wrote nothing. Reads through another base pointer or a computed address are not excluded. The values are those of the A4 dump; the unit's settings may have changed since (D1 ran 3.0.148). User-visible effects (P-COUNT, PAD VELOCITY, CASSETTE, AUTO POWER OFF, MIDI routing and channels, an unlabelled input-related word at +0x110 = 1) are the C3 checklist. Corrects the platform map's earlier 'unclamped +0x15C'."
+    },
+    {
+      "id": "XF-14",
+      "area": "cross-flash",
+      "claim": "Lofi-12 XT 1.5.205 drives SmplTrek's board pins the same way SmplTrek 3.2.174 does: the same 31 gpio_pin_number sites and constants, the same 28 direction calls (26 output, 2 input) and 46 gpio_write calls, and every block that sets them up is identical code (region_diff, 0 real differences; audio_gpio_init's 331 instructions identical even in data addresses). Its pad processing keeps SmplTrek's press/release (800 / 100), debounce and velocity curves and adds continuous pressure. The panel LED message {0xC1, a, b, c, value} is built by identical code.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["docs/01-platform-map.md 'Pad processing and board pins compared for a cross-flash' (2026-11-11): pad_sensor_update read by hand in both; GPIO call-site constants collected in all three; eight GPIO blocks compared with region_diff --at"],
+      "notes": "Device, C3 2026-11-11 (operator report): under Lofi a sample was recorded and played back, menus navigated, no audio or display problems; the button labels differ (Lofi functions on SmplTrek-labelled buttons). Covers pins reached through the shared GPIO helpers; each low-level helper has the same caller count in all three, so no other path was found. Not settled statically: the panel MCU's pad scaling (SmplTrek MCU 1.0.6 vs a Lofi panel MCU), which LED indices a Lofi page uses, and whether a Lofi-12 XT unit's own bootloader sets different clocks."
+    },
+    {
+      "id": "XF-15",
+      "area": "cross-flash",
+      "claim": "Lofi-12 XT 1.5.205's settings sectors can be moved to the top of flash device 0 (0x00FFE000 / 0x00FFF000, erased and unlisted on the SmplTrek) by changing eight instruction words in settings_save / settings_load (seven set ..,24 -> ..,23 and one mvkh 0x01FF -> 0x00FF), with no other site forming those addresses. A cross-flashed Lofi built that way saves its own settings and never writes SmplTrek's.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": ["docs/01-platform-map.md 'Relocated-settings variant' (2026-11-11): every set-formed flash address in the image listed (7), the write-verify helper takes its address as an argument, new words decoded with tic6x objdump, free space from the A4 dump flash map"],
+      "notes": "Specification only, not built or tested. First boot under it is the erased-sector state (zero-filled g_settings after the clamps, not Lofi's factory defaults; the loader's result is ignored by its caller 0xC2BACA38); SYSTEM MENU > RESET writes the defaults. Write review 2026-11-12 (experiments/sessions/C4-relocated-lofi.md): device-0 select, 4 KiB erase only, PRESET CRC excludes the sectors (recomputed from the dump), no other 0x01FF address formation. Locally built images are checked with tools/patches/check_relocated_lofi.py."
+    },
+    {
+      "id": "XF-16",
+      "area": "cross-flash",
+      "claim": "CyDrums 1.1.84 needs its card to do anything: with no card it boots to AppNoCard ('NO CARD / INSERT CARD!'); with a mounted card lacking /CyDrums/System/SystemCore.bin it shows AppNoSystemCore ('BLANK MEDIA! / DOWNLOAD FILES / FROM THE WEB.'). Both pages answer every button, encoder and pad slot with 'handled, do nothing'. Its function-block labels on a SmplTrek panel equal Lofi-12 XT's except REC/kit and MUTE/perfom.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": ["docs/01-platform-map.md 'CyDrums start-up and the card' (2026-11-12): start-up sequence from 0xC24CDF54, message code 14 -> AppNoSystemCore in the MainDelegate switch at 0xC24CE6C8, AppNoCard selected at 0xC24CE184, input slots 4/6/7/8 return 1 in both vtables", "docs/10-cross-flash-button-map.md 'CyDrums 1.1.84 on a SmplTrek panel': CyDrums manual p. 8 item 11 against the shared button-test page"],
+      "notes": "Not run. Whether the global func + key dispatch reaches SYSTEM MENU over these pages was not traced. Card writes, simulated (analysis/cydrums_card_check.py, 2026-11-12): with a mounted card lacking /CyDrums, the start-up card block, the card-insertion lambda and the AppNoSystemCore page make only f_mount and f_stat(SystemCore.bin) calls, no write-side FatFs or disk call; positive controls (file_mkdir, file_open for write) are caught. Hardware polls, flash requests and the heap were stubbed; other tasks, user actions and USB card-reader mode are not covered, and the f_mkdir wrapper's eight call sites remain reachable from those. A CyDrums session also needs the sterilised or relocated settings treatment."
+    },
+    {
+      "id": "XF-17",
+      "area": "cross-flash",
+      "claim": "A CyDrums 1.1.84 app booting on SmplTrek flash accepts SmplTrek's PREF block (tag match, 376 bytes copied, returns 0) and clamps every field except +0x10, +0x2C, +0x34..+0x40, +0x64, +0x68, +0xB0..+0xC8, +0xE4 and +0x114; +0x108 is forced to 4. SmplTrek's settings give wrong-but-valid CyDrums settings: MIDI NOTE MAP PAD CH 1 with all notes 0, per-track channels one up, PROJ/AUTO/PC 16/1/2, MIDI OUT off, AUTO POWER OFF 6 h, metronome volume 3, +0x110 = 1. On erased sectors (relocated build) every word is 0 except +0x50 = 4, +0x54 = 128, +0x108 = 4.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": ["docs/01-platform-map.md 'CyDrums reading SmplTrek's settings' (2026-11-12): settings_validate 0xC24F6088 and settings_set_defaults 0xC24F5088 run in analysis/c6sim.py on the A4 block, erased flash and out-of-range probes; pinned by analysis/test_c6sim.py", "Simulator check (test_c6sim.py): on Lofi-12 XT it reproduces the hand-read XF-13 clamp sequence on high, low, in-range and mismatched blocks and Lofi's known factory defaults; SmplTrek 3.2.174's own validator leaves the A4 block unchanged"],
+      "notes": "Simulation, not device. Labels come from shared offsets (XF-6), CyDrums' factory defaults and its manual, not from CyDrums' page accessors. Readers of the unclamped words were not searched. The values are those of the A4 dump; the unit's settings may have changed since."
+    },
+    {
+      "id": "INT-13",
+      "area": "container",
+      "claim": "Liven SysEx updates (8bit warps 1.1.62/2.0.67/3.0.76, Lofi-12 2.0.55/2.1.65) are the same cmtd container, 7-bit packed into F0 00 48 04 00 00 <device> 7F <command> ... F7 messages (command 0 opens with the length, 1 carries 210 bytes, 2 closes); their seeds validate across releases (profiles liven8bit, livenlofi12) and the family word equals the SysEx device byte (2, 7).",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": ["tools/sonicware_integrity.py unwrap_sysex, derive", "tools/verified_corpus.json (five .syx entries, 2026-11-12)", "tools/test_integrity.py test_liven_sysex_device_byte_is_family_word"],
+      "notes": "Family word = Sonicware product number in release order: ELZ_1 1 (legacy header word 1), 8bit warps 2, XFM 3, Bass&Beats 4, SmplTrek 5, Lofi-12 7, CyDrums and ELZ_1 play 8, Mega Synthesis 11, Lofi-12 XT 12, Ambient Ø 13, MINIMAL 16 (ten Liven files, 2026-11-12; XFM also cross-validated as livenxfm). The shared 8 is not a hardware family: CyDrums' driver classes are the SmplTrek/Lofi-12 XT set (ADControllerUART panel MCU, OLEDDriver, KeyPadDelegate, USBMSC; 342 classes in common with the XT) while ELZ_1 play has LCDDriver, MusicalKeyboardDelegate, MIDIStreamUSBDevice and no panel MCU (93 in common with CyDrums). What the two share is the sound-content lineage (WTLS/WTDT/WTNM/WTFT wavetable chunks, LaunchAnimation), so the number looks inherited from the ELZ_1 play project; neither handles SysEx, so no device byte can confirm it. The seeds, not the family word, keep their updates apart. CyDrums and ELZ_1 play share 8 with different seeds."
+    },
+    {
+      "id": "INT-14",
+      "area": "platform",
+      "claim": "Every Sonicware update obtained (original ELZ_1, Liven 8bit warps, Liven Lofi-12, SmplTrek, Lofi-12 XT, CyDrums, ELZ_1 play, MINIMAL) is C674x SYS/BIOS code on the same C++ framework; the Liven images share 60 class names with SmplTrek 3.2.174 and Lofi-12 XT 1.5.205 and scan keys, LEDs and pots from the DSP (no panel MCU).",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": ["xdc.runtime strings in every mmtd", "tic6x objdump of the Liven Lofi-12 2.1.65 entry (SYS/BIOS c_int00 shape)", "analysis/rtti_recover.py class lists compared 2026-11-12"],
+      "notes": "Not flashable on the SmplTrek: stock code drops SysEx, and the Liven bootloader that receives updates is in no file."
+    },
+    {
+      "id": "INT-15",
+      "area": "container",
+      "claim": "The legacy ELZ_1 layout (seven releases) is cmtd, product number, zero, CRC at 0x0C, descriptor count at 0x10, six-word descriptors from 0x14; image headers carry the version before size and CRC (+0x14); every CRC is a plain zlib CRC-32 with the field zeroed (seed 0). ELZ_1 v6.0 ships a kind-1 BOOT image: a 256 KiB AIS boot area (BOOT 1.0.10) with a trailing bmtd header whose CRC is a plain CRC-32 computed header-first.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": ["seed fit over all seven ELZ_1 releases and the v6.0 boot image (2026-11-12)", "analysis/ais_extract.py manifest of the kind-1 image", "docs/05-bootloader.md 'A second bootloader sample'"],
+      "notes": "Corrects the generalisation of INT-9 beyond the SmplTrek: one legacy ELZ_1 release did ship a BOOT section. No file carries MCU or MCU Boot sections."
+    },
+    {
+      "id": "HW-54",
+      "area": "hardware",
+      "claim": "Both SPI0 flash devices (chip selects 0 and 1) answer JEDEC read-ID 9F with C2 20 18: Macronix, type 20, capacity code 18 (128 Mbit each, two devices = the app's 32 MiB). Device 0 reads status 0x0C and configuration 0x0F; device 1 reads status 0x00 and configuration 0x07.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["M1 bench session, 2026-11-16, image 0.3.1 (bare-metal test image, not published; SHA-256 6479376788a7bf96c6d68ddcbb0c51b43c5354508eb93afaf06bea050613f7e6), step C1 (opcodes limited to 9F, 05, 15 by an allow-list), photographed; experiments/sessions/M1-bench.md \"Results\"", "expected values registered before the session: manufacturer C2, capacity code 18 per 128 Mbit device, status bits 2-3 and configuration bit 3 set on the boot device (BP = 0011, TB = 1)"],
+      "notes": "2026-11-17. Device 0's status bits 2-3 (BP = 0011) and configuration bit 3 (TB = 1) are exactly the boot-area protection check 10 predicted from the bootloader (bottom-area protect over device 0); configuration bits 0-2 = 111 on both are the output-driver-strength field on MX25L parts (inference from the Macronix family layout). C2 20 18 fits the MX25L128x5 family; the exact part suffix is not given by the ID. The app never changes the protect bits (static, 04-hardware-access.md \"SPI flash on SPI0\"), so a write below the protected boundary on device 0 would be refused by the part."
+    },
+    {
+      "id": "HW-55",
+      "area": "hardware",
+      "claim": "The panel MCU sends Bn messages continuously, pressed or not: 4192-4196 messages per second with no pad touched and 4192 with TRK 1 held; the busiest channel (1) gets 262 per second with gaps of 3688-3972 us between its messages. 4192 / 262 = 16, so each of the 16 channels (15 pads and the battery) about every 3.8 ms.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["M1 bench session, 2026-11-16, image 0.3.1 (bare-metal test image, not published; SHA-256 6479376788a7bf96c6d68ddcbb0c51b43c5354508eb93afaf06bea050613f7e6), steps D1 and D2 (every Bn timestamped with the TSC where it is parsed; UART1 read every 128 SPI1 bytes and in the main loop), photographed; experiments/sessions/M1-bench.md \"Results\""],
+      "notes": "2026-11-17. Per-channel rate measured for the busiest channel only; equal rates for all 16 are inference from 4192 / 262. The overrun count stayed at 4 through D1 and D2, so the counts are complete for that window. Answers the pad sample rate question: about 262 Hz per pad, so the stock's pad hold counts (60 and 180 more samples, pad_hold_update 0xC1657418) are about 0.23 s and 0.69 s more (inference). Supersedes HW-46's 85 per second. 2026-11-18: M2 measured all 16 channels at 262-263 a second, their order and the byte timing, unchanged with pads held (HW-68)."
+    },
+    {
+      "id": "HW-56",
+      "area": "hardware",
+      "claim": "STEP 1 (switch bit 32) contact bounce, 20 presses sampled every 10 us: presses settle with 1 edge, releases with up to 7 edges over 175 us; the largest settle time of the 20 was 784 us; no glitch while held.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["M1 bench session, 2026-11-16, image 0.3.1 (bare-metal test image, not published; SHA-256 6479376788a7bf96c6d68ddcbb0c51b43c5354508eb93afaf06bea050613f7e6), step E1, photographed; experiments/sessions/M1-bench.md \"Results\""],
+      "notes": "2026-11-17. One key only; the other 47 are not measured. Well under the stock's 6 ms per-row sample spacing (HW-51), so its release filter and its lack of a press debounce are both adequate for this key."
+    },
+    {
+      "id": "HW-57",
+      "area": "hardware",
+      "claim": "On this C6748, misaligned CPU accesses in cached DDR are silently aligned down, with no exception: LDDW at an address 4 mod 8 returns the doubleword at the address rounded down to 8, LDW at 2 mod 4 returns the word rounded down to 4, and STW at 2 mod 4 writes the word rounded down to 4 and nothing else; EFR and IERR stay 0.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["M1 bench session, 2026-11-16, image 0.3.1 (bare-metal test image, not published; SHA-256 6479376788a7bf96c6d68ddcbb0c51b43c5354508eb93afaf06bea050613f7e6), step I4, three identical runs: buffer 10..1F aligned to 8; LDDW +4 = 13121110 17161514, LDW +2 = 13121110, after STW AABBCCDD at +2 the buffer is DD CC BB AA 14 .. 1F; photographed; experiments/sessions/M1-bench.md \"Results\""],
+      "notes": "2026-11-17. Cached DDR only; peripheral and uncached regions not tested. CyDrums makes a misaligned LDDW at 0xC2503AA4, which therefore reads the aligned doubleword below. 2026-11-18: the other widths and L2 RAM: HW-63."
+    },
+    {
+      "id": "HW-58",
+      "area": "hardware",
+      "claim": "CPU reads of the unmapped low range neither fault nor set an event flag and do not return 0: LDW at 0x0, 0x4, 0x8, 0xC, 0x10, 0x14 and 0x00400000 returned 0, 4, 8, C, 10, 14 and 00400000; LDH at 0x0 and at 0x10 returned 00001918 and LDBU at 0x0 returned 00000018 in another sequence; each read twice and identical over three runs; EFR, IERR and EVTFLAG0-3 unchanged. The L2 ROM word at 0x00700000 reads 00000412.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["M1 bench session, 2026-11-16, image 0.3.1 (bare-metal test image, not published; SHA-256 6479376788a7bf96c6d68ddcbb0c51b43c5354508eb93afaf06bea050613f7e6), steps I1, I2 and I4, photographed; experiments/sessions/M1-bench.md \"Results\" \"Reading I1, I4 and I6\"", "scratch rebuild disassembly of the same image (diag_low_run, diag_mis_run)"],
+      "notes": "2026-11-17. Rule (inference, medium confidence): such a read returns the CPU's last 64-bit load data with the byte lanes picked by the read address's bits 2:0. It fits every I1 and I4 value (I1: the read's address is loaded from the low_addr table in the call's delay slots; I4: the last load was the doubleword 1F1E1D1C 1B1A1918) and two of three I6 values (HW-60). Consequence: the stock's null getter (0xC1616698 reading 0xC) sees data from the previous load, not a fixed 0. Not tested: DMA reads, stores to low memory, a deliberately varied preceding load. 2026-11-18: refined by M2 (HW-62): each load replaces only its own byte lanes, peripheral loads count, stores and low reads do not."
+    },
+    {
+      "id": "HW-59",
+      "area": "hardware",
+      "claim": "USB0 brought up as the stock's usb_dcd_init (CFGCHIP2 0x0972, PSC1 module 1, CTRLR reset, PHY on) reaches USB0PHYCLKGD within 10 ms and CFGCHIP2 reads 0x00020972; the vendor driver's reserved words 0x01E0080C and 0x01E0084C read 0, and STW 0 to 0x01E00808 and 0x01E00848 completes, reads back 0 and raises no event flag or exception.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["M1 bench session, 2026-11-16, image 0.3.1 (bare-metal test image, not published; SHA-256 6479376788a7bf96c6d68ddcbb0c51b43c5354508eb93afaf06bea050613f7e6), step I5, three identical runs, photographed; experiments/sessions/M1-bench.md \"Results\""],
+      "notes": "2026-11-17. No SOFTCONN and no interrupts: the unit was never attached to a host, so the words' values during a session are not tested."
+    },
+    {
+      "id": "HW-60",
+      "area": "hardware",
+      "claim": "Three STW of 0 to the EMIFA chip-select-0 window (0x4630314E, +4, +8; CyDrums's BLANK MEDIA store) with EMIFA not set up do not stall the bus or fault: the program continues, EFR, IERR and EVTFLAG0-3 are unchanged; LDW at 0x4630314C, +4, +8 afterwards returned 1, 4, 1 and, on two later runs, 2, 4, 2, not the stored 0.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["M1 bench session, 2026-11-16, image 0.3.1 (bare-metal test image, not published; SHA-256 6479376788a7bf96c6d68ddcbb0c51b43c5354508eb93afaf06bea050613f7e6), step I6 after a power cycle, photographed; experiments/sessions/M1-bench.md \"Results\""],
+      "notes": "2026-11-17. The stores are dropped (deduced from the reads). The first and third read values equal the routine's state variable loaded just before (HW-58's rule); the middle value 4 is unexplained. Three words tested; the rest of the window is assumed alike. 2026-11-18: the middle value may fit HW-62's lane-wise rule (not checked); both ends of the window: HW-64."
+    },
+    {
+      "id": "HW-61",
+      "area": "hardware",
+      "claim": "On the unit's headphone output, a tone written to the even 32-bit words of the McASP0 TX buffer only is heard in the left ear only, the odd words only in the right ear only, and both in both ears, with the codec, McASP0 and EDMA set up by the stock's traced sequence (including its one-word-short first transfer, 255 words).",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": ["M1 bench session, 2026-11-16, image 0.3.1 (bare-metal test image, not published; SHA-256 6479376788a7bf96c6d68ddcbb0c51b43c5354508eb93afaf06bea050613f7e6), part A steps A4-A6 (D3-audio.md: STEP 1 even words, STEP 2 odd words, STEP 3 both), headphones; ticked ok on the bench page and the order confirmed by the operator 2026-11-17", "photo of the page during A4"],
+      "notes": "2026-11-17. Confirms the transmit half of HW-26 (even words = left) on the unit. Headphones only: line out (A7) was not run. The receive half (even words = left ADC) is not observed; it follows from the shared frame sync (inference, as in HW-26). Why the documents read the other way (HW-26 notes) is still not known."
+    },
+    {
+      "id": "AUD-1",
+      "area": "audio-engine",
+      "claim": "SmplTrek 3.2.174's audio_render_main (0xC159AC24) processes a block in this order: input fill and snapshot; audio_mix_main (clear send and post buses; track or preview mix; USB and EXT into the post bus; copy of out into block 0xC16DE750; AudioFilePlayer playback added while playing; send effect; out += 0xC16DE750; master effect; PROJECT LEVEL ramp B14+1128 to B14+360); REC SRC 25 loop-back of out into the input block; out += g_post_bus at unity; input monitor; MASTER LEVEL ramp (B14+1132 to B14+520); output meter; USB audio send; pre-count and metronome clicks last.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: render_order (audio_mix_main hooked: post bus added after it, REC SRC 25 copies out before the post bus and MASTER LEVEL, metronome present with output gain 0)",
+        "audio_mix_main 0xC159A0C0 read 2026-11-17 (docs/06-audio-engine.md 'One block, in order')"
+      ],
+      "notes": "2026-11-17. Simulated and read; not observed. That the click is absent from the USB stream follows from the order only."
+    },
+    {
+      "id": "AUD-2",
+      "area": "audio-engine",
+      "claim": "In SmplTrek 3.2.174 audio_mix_tracks adds, per track 0-12, out += dry x P and g_send_bus += send x track[+20] x P, with P = B14+1008 copied on every call from B14+528 (PRJ-EXT BALANCE); audio_mix_usb adds post += dry and send += send x usb[+20]; audio_mix_ext adds post += dry x E and send += send x ext[+20] x E, E = B14+1012 copied from B14+532. track+20 is the TRACK SEND gain, through the curve 0xC167EB74 ((v/63)^2 up to 63, then 1 + (v-63)/64).",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: mix_tracks (P 0.5, sends 0.25/0.5/0 -> out L 55.5, send L 10.5), mix_usb, mix_ext, curves",
+        "writers read: 0xC15C6008 (send), 0xC158BEE4 (balance); docs/06-audio-engine.md 'Track mix'"
+      ],
+      "notes": "2026-11-17. Mixer arithmetic simulated with hooked track renders; the setters were simulated with scripts not kept. Corrects the symbol-file note on 0xC158C668 (it returns B14+532; the 54-entry table belongs to the next function)."
+    },
+    {
+      "id": "AUD-3",
+      "area": "audio-engine",
+      "claim": "SmplTrek 3.2.174's g_mixer_channels (0xC14D60F0, 30 entries of 120 bytes, no vtable) are per-track biquad EQs: entry 2t filters track t's dry L plane, 2t+1 its dry R plane; the send block is not filtered, so sends are pre-EQ. The coefficients are 0 at boot.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: track_eq",
+        "writer 0xC15C5C2C(track, type, freq, amount) read; filter shapes per type simulated with scripts not kept (docs/06-audio-engine.md)"
+      ],
+      "notes": "2026-11-17. EQ type names (high-pass, band-pass, peaking, low-pass, shelves) are inference from simulated shapes."
+    },
+    {
+      "id": "AUD-4",
+      "area": "audio-engine",
+      "claim": "SmplTrek 3.2.174 has three effect racks {+0 index, +4 on, members}: send g_send_effects 0xC14C421C (11: StereoDigialDelay ... SideChainCompressor), master g_master_effects 0xC14C2400 (+8 a second gate, members from +12; 5: AnalogRecord ... Maximizer) and insert 0xC1495288 (20: Chorus, Flanger, Phaser, InsertDelay, AnalogDelay, Vibrate, AutoWah, Tremolo, RingModulator, SamplerateCrusher, AutoPan, Isolator, TiltFilter, Compressor, RackComp, CleanAmp, CrunchAmp, RockAmp, MetalAmp, BassAmp). The insert effect runs in place on one track's dry block (project word 0xC1500D18) or, when that word is -1, on the input block; INSERT FX on is 0xC1500CFC (CC 36).",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: racks (members read until a word is not an RTTI object)",
+        "audio_track_render 0xC15A9EC0..0xC15A9F44 and 0xC159A92C read (docs/06-audio-engine.md 'Effects')"
+      ],
+      "notes": "2026-11-17. The insert call itself was read, not simulated."
+    },
+    {
+      "id": "AUD-5",
+      "area": "audio-engine",
+      "claim": "SmplTrek 3.2.174's send effect is called as process(fx, g_send_bus, 0xC16DE750, 0xC16DF790): the send bus is the input, block 0xC16DE750 the output (its copy of the dry mix is overwritten), 0xC16DF790 the sidechain key; the output is 100% wet (StereoDigialDelay: nothing in the first block, first echo 23,624 samples after an impulse). The master effect works in place on out and does not read the send bus. 0xC15AAAD0 only returns 0xC16DF790.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: send_delay, master_maximizer, dry_block_getter"
+      ],
+      "notes": "2026-11-17. Corrects earlier platform-map wording (argument roles unchecked; 0xC15AAAD0 described as a pass over the tracks). Hall and Room were seen wet-only with scripts not kept."
+    },
+    {
+      "id": "AUD-6",
+      "area": "audio-engine",
+      "claim": "In SmplTrek 3.2.174, with SEND FX on (0xC1500D1C) and the send type 10 (SideChainCompressor), audio_mix_tracks writes (L+R)/2 of the key track's dry block (project word 0xC1500D34) into 0xC16DF7A0 (= key block 0xC16DF790 + 16); tracks with a send gain above 0 then go wholly to the send bus (dry gain 0).",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: sidechain (key for tracks 10-12; untouched with send type 6)",
+        "second loop 0xC15AA670 read"
+      ],
+      "notes": "2026-11-17. The routing switch and the compressor's gain (key 0.9 -> 0.022) were simulated with hooked renders and scripts not kept."
+    },
+    {
+      "id": "AUD-7",
+      "area": "audio-engine",
+      "claim": "SmplTrek 3.2.174's AudioEngine::AudioFilePlayer keeps its state at B14+884 (0 idle, 1 playing, 2 recording standby, 3 recording, 4 fading out, 5 auto-record waiting for the threshold); 0xC1625BF8 is true for 1 and 4, 0xC1625F50 for 5, 0xC162600C for 2, 0xC16263D0 for 3. While playing, 0xC1625D8C adds the resampled file into out (it does not replace), with per-channel gains 0xC15041E4 / E8, asking the resampler for 128 frames and advancing the stream by the count it returns.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: file_mix (0.25 + 8192/32768 = 0.5; gains 0.5 / 2.0 -> 0.375 / -1.25), player_states",
+        "class from the four {lambda(AudioEngine::AudioFilePlayer::State)} RTTI classes; stream vptr 0xC16CE690 AudioEngine::AudioFileStream; callers: AUDIO TEST page (SmplTrekTestAudio.wav), SAMPLE POOL, drum instrument select, slice, region, SAMPLING"
+      ],
+      "notes": "2026-11-17. State meanings from the transitions (simulated with scripts not kept) and the callers; names are inference. The resampler 0xC1630228 was not run."
+    },
+    {
+      "id": "AUD-8",
+      "area": "audio-engine",
+      "claim": "SmplTrek 3.2.174's metronome (Sequencer::Metronome 0xC1503F68) and pre-count (Sequencer::SequencerPrecount 0xC1501930) render a square wave through 0xC1685CEC, the same on L and R: mode 1 750 Hz for 31 cycles (1984 samples), mode 2 and the pre-count 375 Hz for 15 cycles (1920 samples). METRONOME VOLUME (g_settings+0x4C) sets the amplitude by a cubic curve: level 3 peaks at 0.0122, 10 at 0.4516, 16 at 1.85 (past full scale); 0 is silent. The clicks are added after MASTER LEVEL.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: clicks, render_order",
+        "vptrs 0xC16D25F0 / 0xC16D25E0 in work/smpltrek-3.2.174.rtti.json"
+      ],
+      "notes": "2026-11-17. Not heard on the unit; that mode 1 is the accent is inference. Bench check: docs/06-audio-engine.md 'Bench checks'."
+    },
+    {
+      "id": "AUD-9",
+      "area": "audio-engine",
+      "claim": "In SmplTrek 3.2.174, B14+360 (the gain audio_mix_main ramps to) is PROJECT LEVEL: the project word 0xC1500CF0 (0-127, 100 at boot) through the level curve 0xC167EAC8 (100 -> 1.0, 127 -> 2.0, 63 -> 0.2512), set by 0xC158AD40 (DialogProjectLevel, CC 34). MASTER LEVEL (g_settings+0x44) uses the same curve for B14+520.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: project_level, curves",
+        "callers of 0xC158AD40 read"
+      ],
+      "notes": "2026-11-17. PROJECT LEVEL scales the tracks and effects but not USB AUDIO or EXT SRC (post bus), from AUD-1's order."
+    },
+    {
+      "id": "AUD-10",
+      "area": "audio-engine",
+      "claim": "In SmplTrek 3.2.174, REC SRC 25 (g_settings+0x10) with the line PAD off copies out after audio_mix_main into g_audio_in_block (0xC1599E64), so resampling the mix records the project before USB AUDIO, EXT SRC, the monitor and MASTER LEVEL; REC SRC 12 + i records track i's dry block after its insert effect and EQ and before the balance gain (TrackDelegate tap at B14+1016, which also keeps per-track peak meters at 0xC1500B80 + 8i).",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "analysis/audio_engine_map.py and test_audio_engine_map.py: render_order (REC SRC 25)",
+        "TrackDelegate 0xC1549D0C read; the per-track feed (REC SRC 22 -> track 10) simulated with a script not kept"
+      ],
+      "notes": "2026-11-17. Medium: the per-track part rests on a script not kept."
+    },
+    {
+      "id": "AUD-11",
+      "area": "audio-engine",
+      "claim": "In SmplTrek 3.2.174, g_settings+4 is SOURCE: 0 advances the internal sequencer clock (0xC1681738), 1 and 2 the external clock object of HW-31 (0xC165F40C). Project word 0xC1500D14 (0xC158D140) = 1 runs the input insert effect before the record tap (wet recording), otherwise after (dry).",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "0xC158B5F0, 0xC1595574 and audio_render_main's input section read; switch simulated with scripts not kept (docs/06-audio-engine.md 'Other settings in the path')"
+      ],
+      "notes": "2026-11-17. That SOURCE 1 and 2 are MIDI and SYNC, and which page sets 0xC1500D14, are open."
+    },
+    {
+      "id": "AUD-12",
+      "area": "audio-engine",
+      "claim": "The symbol file had three SmplTrek 3.2.174 data addresses 0x20000 low: g_sd_ctrl is 0xC14B63A8, g_oled_framebuffer 0xC14B8400, g_oled_framebuffer_saved 0xC14BA400 (not 0xC14963A8, 0xC1498400, 0xC149A400); the code forms each with mvkh 0xC14B0000.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "work/smpltrek-3.2.174.dis: mvk 25512 / mvkh 0xC14B0000 at 0xC1646218 (g_sd_ctrl); OLEDDriver::framebuffer 0xC1672484 mvk -31744 / mvkh 0xC14B0000; every mvk -23552 pairs with mvkh 0xC14B0000",
+        "HW-25 and analysis/sd_map.py already used 0xC14B63A8"
+      ],
+      "notes": "2026-11-17. Fixed in symbols/smpltrek-3.2.174.json, 02-platform-symbols.md (regenerated), 01-platform-map.md and the test_mmio_trace fixture. Found because the framebuffer appeared to overlap the insert effect objects."
+    },
+    {
+      "id": "INT-16",
+      "area": "platform",
+      "claim": "Which C674x part each product's code can run on, from the peripherals its code constants address (TI data sheets SPRS587F C6742, SPRS591F C6746, SPRS590G C6748: only the C6748 has the LCD controller, SATA, USB 1.1 and the 128 KiB shared RAM; the C6742 also lacks USB0, MMC/SD, SPI0, UART1/2, I2C1, Timer2/3, PRU, uPP, VPIF, EMAC and McBSP0, and has 64 KiB of L2 and 200 MHz). ELZ_1 (v2.0, v6.0, v7.0) and ELZ_1 play 3.1.149 address the LCD controller (0x01E13000) and so need a C6748. SmplTrek 3.2.174, Lofi-12 XT 1.5.205, CyDrums 1.1.84 and MINIMAL 1.0.58 address USB0, MMC/SD0, SPI0, UART1/2 and I2C1: C6746 or C6748. All ten Liven releases (8bit warps, XFM, Bass&Beats, Lofi-12, Mega Synthesis, Ambient \u00d8) address only UART0, I2C0, SPI1, McASP0, GPIO, PSC0/1, SYSCFG0/1, EDMA3 CC0, Timer0, INTC and cache control, all present on every part: C6742, C6746 or C6748.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": ["analysis/hw_inventory.py over the 18 releases named (2026-11-18), last line 'parts with every peripheral found'", "analysis/test_hw_inventory.py (ELZ_1 v2.0 -> C6748; Liven Lofi-12 2.1.65 -> all three)", "ELZ_1 play 0xC27C3AD4/0xC27C3AD8 builds 0x01E13000 for driver calls and 0xC27C3B0C/0xC27C3B24 builds PSC1 0x01E27000 with module 16 (the LCD controller's power domain on the C6748)"],
+      "notes": "2026-11-18. A hit rules a part out; an absence rules nothing in, since the tool sees only addresses built as MVK/MVKH constants. No code addresses L2 beyond 64 KiB or the shared RAM (0x80000000-0x80000008 occur only as flag values), so on-chip memory does not separate the parts. The SmplTrek board is also not a C6742 by its 372 MHz clock (bootloader PLL settings). For the SmplTrek family the C6748 rests on the teardown photo (HW-1); for the Liven products the firmware cannot name the part."
+    },
+    {
+      "id": "INT-17",
+      "area": "platform",
+      "claim": "Every current-layout image obtained (SmplTrek, Lofi-12 XT, CyDrums, ELZ_1 play, MINIMAL, the ten Liven releases) was configured for the DA850 device class (C6742, C6746, C6748, OMAP-L138): its SYS/BIOS timer table lists Timer0 and Timer1 (0x01C20000, 0x01C21000) and Timer2 and Timer3 (0x01F0C000, 0x01F0D000), which SYS/BIOS generates for that class and not for the DA830 class (C6747, C6745, C6743, OMAP-L137).",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": ["hw_inventory.py data-word scan: two words per timer in each of the 15 images (2026-11-18)", "bios_6_76_03_01 packages/ti/sysbios/timers/timer64/Timer.xs device tables: TMS320C6742/C6746/C6748 and OMAPL138 map to TMS320DA850, C6747/C6745/C6743 and OMAPL137 to TMS320DA830"],
+      "notes": "2026-11-18. This is the build's device setting, not a use of the timers, so it does not separate C6742, C6746 and C6748 (INT-16 does what it can). The legacy ELZ_1 images are not read through their copy table, so they are not covered."
+    },
+    {
+      "id": "XF-18",
+      "area": "cross-product",
+      "claim": "CyDrums 2.0.97 beta adds 32 sample slots. /CyDrums/Contents/Samples/SlotInfo.lst is ASCII text with no header: exactly 32 CRLF-terminated lines, line N holding slot N's full path or nothing. It is read at start-up by the ResourceLoader task (only when SystemCore.bin exists; a missing list leaves the slots empty and creates nothing) and rewritten whole on sampling save, import, rename and slot delete; the writer creates the Samples folder if missing. Sampled files are <prefix><001-999>.wav (prefix MIC, HIZ, DYN, LINE or USB from the input) in that folder: plain WAV, PCM mono 32000 Hz 16-bit, at most 128000 samples (4.0 s). Import assigns the chosen file's own path to a slot without copying it and refuses files longer than 4.0 s after conversion to 32 kHz.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["CyDrums 2.0.97 beta: writer 0xC2612810, reader 0xC2612A94 (line rules at 0xC26126C0), slot table 0xC2436340, slot audio 0xC3800000 + (slot << 18), length clamp 0xC265CA6C, WAV parameters 0xC2549814-0xC2549824 (mvk 32000, 1, 2), name prefixes table 0xC2730788, record limit 0xC25A5B7C, import 0xC2602BB0 / 0xC26029FC", "docs/01-platform-map.md 'CyDrums 2.0.97 beta'"],
+      "notes": "2026-11-18. Read from code; spot-checked: the WAV parameters, the 128000 limit (mvk -3072 with a high half of 1) and the name table's pointers to the MIC..USB strings. The new RTTI classes (19, none removed: sampling, import, sample browser and rename, a modulation LFO, ramp oscillators, SoundEngine::OSCSPStandard) and unchanged peripherals and settings_save are in the same section. Source formats the import loader accepts (PCM 8-32 bit, float) are inferred."
+    },
+    {
+      "id": "XF-19",
+      "area": "cross-product",
+      "claim": "On a foreign card (no /CyDrums files) CyDrums 2.0.97 beta makes no write-side card call on its start-up card block, its card-insertion handler or the BLANK MEDIA page, as 1.1.84: only f_mount and f_stat(/CyDrums/System/SystemCore.bin). On a card with SystemCore.bin but no configs, both versions create .SoundConfig, .EfxConfig and .KitConfig (f_open mode 0x6) and mkdir /CyDrums/System/Project/Project001 on those paths; SlotInfo.lst is not opened there.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": ["analysis/cydrums_card_check.py (version picked from the image; --system-core for the second case) on c6sim after sim_boot's 'cydrums-2.0.97' start-up state", "analysis/test_cydrums_card_check.py ForeignCard2", "instances: MainDelegate 0xC222288C, AppNoSystemCore 0xC249B2DC; entries: card block 0xC253F4B0, lambda 0xC264D300"],
+      "notes": "2026-11-18. Writes were refused by the hooks, so a real card could take later paths that the simulation does not. Not covered: the ResourceLoader task (reading SlotInfo.lst alone writes nothing when it is missing), user actions, USB card-reader mode. Mode 0x6 read as FA_WRITE | FA_CREATE_NEW assumes standard FatFs flag values. Same day: 1.1.84's AppNoSystemCore instance corrected to 0xC242FFE8 (was 0xC241FFE8, a sign-extension misreading); AppNoCard to 0xC242FFD8."
+    },
+    {
+      "id": "HW-62",
+      "area": "hardware",
+      "claim": "A CPU load from the unmapped low range or from the EMIFA CS0 window (EMIFA not set up) returns data the CPU loaded earlier, held as eight byte lanes and picked by the read address's bits 2:0. Each load replaces only the lanes it reads (LDBU one, LDW four, LDDW eight), a load from a peripheral register replaces them too, and stores, low reads and EMIFA reads do not. After LDDW of 24232221 28272625 on .D1T1: LDW 0x8 = 24232221, LDW 0xC = 28272625, LDH 0x2 = 00002423, LDBU 0x5 = 00000026, LDNW 0x1 = 25242322, LDNW 0x5 = 21282726, LDNDW 0x3 = 27262524 23222128, LDW 0x4630314C = 28272625; a STW of AABBCCDD to the loaded address between does not change it; a load of EVTFLAG0 between makes LDW 0x8 return EVTFLAG0's value. Read first thing in the image (after the bootloader's jump), LDW 0x8 returned 0 twice. EFR, IERR and EVTFLAG0-3 unchanged throughout.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": [
+        "M2 bench session, 2026-11-18, image 0.3.2 (bare-metal test image, not published; SHA-256 a09d1d3df11853e8b8ad5e20f8eb2b51dbd3a188b91fb65252f526909632f090), views LOW2, L8 and LOWW (each probe a hand-written assembly routine, run twice and LOW2 pressed twice, all identical), photographed; experiments/sessions/M2-bench.md \"Results\" and \"Reading the results\"",
+        "the test image's disassembly: the driver loads each probe's address from low_fn at 0xC2015510 on .D1T1 just before calling it, which accounts for L5b = C20004E4 and L5c = C2002204 lane by lane"
+      ],
+      "notes": "2026-11-18. Refines HW-58's rule (\"the last 64-bit load\") with M2's probes: L5a-c (narrow and partial loads) and L2 (a store between) separate lane-wise latching from both \"the last load's whole doubleword\" and \"the RAM contents\". Exception, not explained: in an interrupt handler, LDDW of another doubleword on .D2T2 did not replace the held data (L6: LDW 0x8 after return = 24232221). Every load seen to replace it was on .D1T1; that the held data is per data path (side A / B) is a hypothesis, not tested. DMA reads not tested."
+    },
+    {
+      "id": "HW-63",
+      "area": "hardware",
+      "claim": "Misaligned LDH, LDHU, STH and STDW are aligned down to the access size with no exception, in cached DDR and in L2 RAM alike: on the bytes 10..1F (8-aligned), LDH at +1 = 00001110, LDHU at +3 = 00001312, STH BEEF at +3 writes bytes 2-3 (10 11 EF BE 14 ..), STDW A7A6A5A4:A3A2A1A0 at +5 writes bytes 0-7 (A0 .. A7 18 ..); EFR and IERR stay 0.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": [
+        "M2 bench session, 2026-11-18, image 0.3.2 (bare-metal test image, not published; SHA-256 a09d1d3df11853e8b8ad5e20f8eb2b51dbd3a188b91fb65252f526909632f090), view MIS2 (DDR buffer and L2 RAM at 0x0083FF00), two runs each, photographed; experiments/sessions/M2-bench.md \"Results\" and \"Reading the results\""
+      ],
+      "notes": "2026-11-18. With HW-57 (LDDW, LDW, STW in DDR) every load and store width is now observed aligning down. Uncached and peripheral addresses still not tested."
+    },
+    {
+      "id": "HW-64",
+      "area": "hardware",
+      "claim": "STW of 0 to 0x40000000 and to 0x5FFFFFFC (both ends of EMIFA CS0, EMIFA not set up) completes without a stall or exception: EFR, IERR and EVTFLAG0-3 unchanged and the program carries on.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": [
+        "M2 bench session, 2026-11-18, image 0.3.2 (bare-metal test image, not published; SHA-256 a09d1d3df11853e8b8ad5e20f8eb2b51dbd3a188b91fb65252f526909632f090), view EMIF2 (each store on its own key press, seconds counter 359 then 365), photographed; experiments/sessions/M2-bench.md \"Results\" and \"Reading the results\""
+      ],
+      "notes": "2026-11-18. With HW-60 (0x4630314E..) three points of the window behave alike; the whole window is assumed alike. Reads there: HW-62."
+    },
+    {
+      "id": "HW-65",
+      "area": "hardware",
+      "claim": "STW to 0x0, STH to 0x10 and STB to 0x200 (reserved low memory) complete with no exception or event flag and store nothing: a word read back from each after a reference LDDW returns the reference data (24232221), not the value stored (A5..).",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": [
+        "M2 bench session, 2026-11-18, image 0.3.2 (bare-metal test image, not published; SHA-256 a09d1d3df11853e8b8ad5e20f8eb2b51dbd3a188b91fb65252f526909632f090), view LOWW, runs 2 and 3, each store twice per run, photographed; experiments/sessions/M2-bench.md \"Results\" and \"Reading the results\""
+      ],
+      "notes": "2026-11-18. Supports the emulator's --reserved-low-writes assumption (the stock's USB start-up makes six such stores through null pointers). That nothing else changes is inferred from the flags and the program carrying on."
+    },
+    {
+      "id": "HW-66",
+      "area": "hardware",
+      "claim": "RCPSP, RSQRSP, RCPDP and RSQRDP on this C6748 return the exact result rounded to nearest at eight mantissa bits, all lower bits zero: for inputs 1 + k/256 (k = 0..255) at exponents 0, +1 and -3, the 256-result CRC-32s per instruction and exponent are 24BA9252, F62922BA, 7236A471 (RCPSP), B37E28CA, 62118BB7, D4B23279 (RSQRSP), 9F40B027, 1F67AB74, 3C697084 (RCPDP), E9F42249, 0F916977, 1F9C6A55 (RSQRDP), each equal to the CRC of the rounded-to-nearest values, and 116-132 results per table differ from truncation. Special inputs (single): RCPSP / RSQRSP of +0 = 7F800000 / 7F800000, -0 = FF800000 / FF800000, +inf = 0 / 0, -inf = 80000000 / 7FFFFFFF, NaN 7FC00000 = 7FFFFFFF / 7FFFFFFF, 00000001 = 7F800000 / 7F800000, -1 = BF800000 / 7FFFFFFF, 7F7FFFFF = 00000000 / 1F800000.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": [
+        "M2 bench session, 2026-11-18, image 0.3.2 (bare-metal test image, not published; SHA-256 a09d1d3df11853e8b8ad5e20f8eb2b51dbd3a188b91fb65252f526909632f090), view RCP pages 1-5, photographed; experiments/sessions/M2-bench.md \"Results\" and \"Reading the results\"",
+        "rounded tables computed with exact arithmetic (host-side model, rounding to nearest), CRC-32 of the 256 results as little-endian words, all twelve equal to the unit's"
+      ],
+      "notes": "2026-11-18. The CRCs prove the twelve swept tables (3,072 results); outside the sweep, rounding to nearest is inference. No sweep input falls on a tie, so tie handling is not observed. Double specials (high:low): RCPDP +0 7FF00000:0, -0 FFF00000:0, +inf 0, -inf 80000000:0, NaN 7FFFFFFF:FFFFFFFF, denormal 7FF00000:0, -1 BFF00000:0, max 0; RSQRDP the same for +0, -0, +inf, NaN and denormal, -inf and -1 7FFFFFFF:FFFFFFFF, max 1FF00000:0. GCC's float and double division starts from these estimates, so last-bit results of divisions on the unit depend on the rounding."
+    },
+    {
+      "id": "HW-67",
+      "area": "hardware",
+      "claim": "A TIMER64P1 interrupt (event 40 on CPU interrupt 4, period 6,452 ticks of 24 MHz) taken in a loop of mvc tscl / nop 9 / add / b / nop 5 returned to the packet after the NOP (IRP = LOOP+2) at two TSC distances from the loop's TSCL read, 20 and 25 cycles, and otherwise to LOOP+0 (32) or LOOP+1 (16); over 4,096 interrupts the counts were 1365, 1364, 682 and 682 (plus 1-3 single others), the same on a second run. In the same loop with IDLE in place of NOP 9, all 4,096 interrupts returned to the packet after the IDLE and the loop made one pass per interrupt.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": [
+        "M2 bench session, 2026-11-18, image 0.3.2 (bare-metal test image, not published; SHA-256 a09d1d3df11853e8b8ad5e20f8eb2b51dbd3a188b91fb65252f526909632f090), views NOP (two runs) and IDLE, photographed; experiments/sessions/M2-bench.md \"Results\" and \"Reading the results\""
+      ],
+      "notes": "2026-11-18. Inference: two distinct distances returning after the NOP mean an interrupt is not held until a multicycle NOP ends (consistent with SPRUFE8B 5.5.4). Not resolved: shares of 2:2:1:1 cannot come from 17 equally likely phases of a 17-cycle loop, so either the loop's length on the unit differs from 17 cycles (a multiple of 6 fits) or the interrupt period in CPU cycles is not the 100,006 the image assumed; the image did not measure the loop's own period. Return after IDLE is the next packet (emulator's model)."
+    },
+    {
+      "id": "HW-68",
+      "area": "hardware",
+      "claim": "The panel MCU sends its 16 channels in a fixed repeating order, 0 4 3 7 B D A E F 2 1 5 9 6 8 C (status bytes B0, B4, B3 ...), each 262-263 times a second (12,576 bytes a second), with nothing but Bn messages and no byte in the 20 ms before the firmware's first byte. Characters inside a message are 21.4-22.0 us apart; consecutive messages 64.9-1455.7 us apart (bursts of back-to-back messages and pauses, mean 238.5 us). Idle pad levels are 0-4; holding TRK 1 hard (channel 1 at 0CF6), or TRK 1 and TRK 8 (channel 0 at 0CAA), does not change any channel's rate.",
+      "status": "observed-device",
+      "confidence": "high",
+      "evidence": [
+        "M2 bench session, 2026-11-18, image 0.3.2 (bare-metal test image, not published; SHA-256 a09d1d3df11853e8b8ad5e20f8eb2b51dbd3a188b91fb65252f526909632f090), view PADR (one second of UART1 bytes time-stamped in a loop that does nothing else; 0 overruns), three captures, photographed; experiments/sessions/M2-bench.md \"Results\" and \"Reading the results\""
+      ],
+      "notes": "2026-11-18. On the AC adapter, no batteries: channel 15 (battery) read 0, 4 and 6; its level on batteries not measured. The order in pad names (HW-47): TRK 8, TRK 10, TRK 2, TRK 4, TRK 6, TRK 7, GLOBAL 3, EXT SRC, battery, TRK 9, TRK 1, TRK 3, TRK 5, GLOBAL 1, GLOBAL 2, USB AUDIO. The capture of a pad press's rise (P6) failed: its trigger (first level above 0) fired on idle noise."
+    },
+    {
+      "id": "XF-20",
+      "area": "cross-product",
+      "claim": "The GPIO, codec and peripheral layer is the same in all 13 releases of SmplTrek (1.0.65-3.2.174), Lofi-12 XT (1.1.156, 1.2.179, 1.5.205) and CyDrums (1.1.84, 2.0.97 beta): 31 gpio_pin_number sites with the same constants, 28 direction calls (inputs GP3[8], GP4[0]), 46 gpio_write, 17 gpio_read and 6 gpio_read_bank16 sites over the same pins, bank 7 the only GPIO interrupt, 12 direct GPIO sites. GP3[8] is the only jack-like input in every release; no release touches codec registers 13, 14, 96 or 97. The one change: codec register 12 = 0x50 moved from codec_adc_hpf_init (SmplTrek <= 2.0.129) to audio start (>= 3.0.148).",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "call-site and pin-constant census per image (scratch scripts gpio_scan.py, census2.py, codec_scan.py)",
+        "hw_inventory.py per image",
+        "docs/01-platform-map.md \"Hardware use per product\""
+      ],
+      "notes": "2026-11-19. CyDrums 2.0.97 has no symbol file; its helpers were found by byte pattern and codec_write by position and caller count (medium-high there). Pin addresses built through pointers would not be seen; none are known. Inputs sensed by the panel MCU would arrive over UART1 (XF-22)."
+    },
+    {
+      "id": "XF-21",
+      "area": "cross-product",
+      "claim": "Lofi-12 XT 1.5.205 and CyDrums 1.1.84 / 2.0.97 write no codec register and drive no audio pin outside SmplTrek 3.2.174's shared code (86 codec_write sites in each, identical counts per function). They select inputs with a (source 0-6, level 0-2) pair at g_settings+0x158 / +0x15C whose every value gives the codec, pin and slot state of a SmplTrek REC SRC (0 built-in mic, 1 Hi-Z, 2 dynamic mic, 3 stereo line, 4 mono line, level 1 = PAD on 3/4, 5 USB, 6 resample). CyDrums 1.1.84 selects only from AppExtSrc (sources 0-4); CyDrums 2.0.97 adds a sampling pair at +0x64 / +0x68 applied while the sampling page is open, and L / R / L+R choices for USB. Every product keeps the built-in-mic rule on GP3[8]; only SmplTrek draws the title-bar mic icon.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "region_diff of the codec, input-action, per-pin and McASP blocks (0 real differences, CyDrums 2.0.97 included)",
+        "selector simulated in c6sim per product for source 0-7 x level 0-2 (scratch selsim.py)",
+        "docs/01-platform-map.md \"Hardware use per product\""
+      ],
+      "notes": "2026-11-19. Source names inferred from Lofi's file prefixes BIM GTR MIC MIX INL USB RSM and the equivalence (medium). Labels of +0x28, +0x64, +0x68 from use."
+    },
+    {
+      "id": "XF-22",
+      "area": "cross-product",
+      "claim": "The panel MCU link is the same in SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84 / 2.0.97: the same one-byte commands 90 91 B0 B1 B2 A0 C2 from the same call sites, panel_led_command with 19 callers, only Bn and A1 parsed, and the MCU version bytes read only for SYSTEM INFO. No product sends or parses a pressure, aftertouch, sensor or configuration message; the same 115 LED addresses are reached in all.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "region_diff of ADControllerUART (only the known task-priority constant differs)",
+        "command bytes in CyDrums 2.0.97 read after the simulated start-up",
+        "constant census of the UART object fields per product",
+        "docs/01-platform-map.md \"Hardware use per product\""
+      ],
+      "notes": "2026-11-19. Product LED differences: CyDrums never lights FUNC, MIXER, HOME, REC or PLAY outside the clear-all; the TEMPO LED in mode 1 is amber in CyDrums, blue in SmplTrek and Lofi."
+    },
+    {
+      "id": "XF-23",
+      "area": "cross-product",
+      "claim": "Pad pressure is derived on the DSP from the ordinary pad samples. Lofi-12 XT 1.5.205: a press starts a 40-sample countdown that sets a baseline; raw > baseline + 200 turns pressure on; pressure = mean of the last 9 lookups on a Lofi-only fourth velocity curve (0xC2D87768) / 127, sent to KeyPadDelegate slot 3 when it moves by more than 1/127. CyDrums 1.1.84 / 2.0.97: slot 1 receives a 0-127 value on every sample while a pad is held, and its handler 0xC24CD4A0 passes 0xD0 | channel, value to g_midi_stream_pad (MIDIStreamPAD, 0xC2430078), which re-enters the app's MIDI input; on_midi_channel_pressure (slot 4) applies it to the matching tracks' voices. It is not sent to DIN or USB-MIDI.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": [
+        "pad_sensor_update simulated in c6sim per product (scratch padsim.py, lofi_press.py)",
+        "divide by 9.0f (0x41100000) at Lofi 0xC2C6A0E4",
+        "CyDrums handler builds (channel word - 48) & 0xFF and calls 0xC2578014 with length 2, which tail-branches to the stream write with object 0xC2430078 = g_midi_stream_pad",
+        "docs/01-platform-map.md \"Hardware use per product\""
+      ],
+      "notes": "2026-11-19. High for the Lofi algorithm and the CyDrums stream; corrected the same day: 0xC2578014 hands the message to g_midi_stream_pad (its object constant), not to a MIDI output; the emulator saw no 0xD0 on UART0 with a pad held, and 0xC24E2970 calls no MIDI sender. Corrects platform-map's earlier '8-sample average' and 'about 1.0' threshold."
+    },
+    {
+      "id": "XF-24",
+      "area": "cross-product",
+      "claim": "Lofi-12 XT 1.5.205 and CyDrums 1.1.84 / 2.0.97 run 96 sequencer steps per quarter note (SmplTrek 72), send MIDI clock every 4 steps, pulse SYNC OUT at steps 0 and 48 and feed 48 steps per SYNC IN edge, so SYNC stays 2 PPQN in every product with SmplTrek's 15 ms pulse. Lofi alone sends Song Position Pointer (0xC2C59E20); CyDrums' MIDI tx-allowed check returns 1 (0xC24EE304, 2.0.97 0xC2565DB4), so it never blocks MIDI output during an export, and its SYNC IN feed skips the export check.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": [
+        "clock-position handlers and SyncClockReceiver bodies read per product (constants 96, 48, & 3)",
+        "the SPP sender splits a 14-bit value into two 7-bit bytes and sends 3 bytes",
+        "docs/01-platform-map.md \"Hardware use per product\""
+      ],
+      "notes": "2026-11-19. Constants high; 'no pulses while stopped' rests on the running gate read by analogy with SmplTrek (medium). Not simulated: sync_map.py is SmplTrek-only."
+    },
+    {
+      "id": "XF-25",
+      "area": "cross-product",
+      "claim": "USB, power and bus use match SmplTrek 3.2.174 in Lofi-12 XT 1.5.205 and CyDrums 1.1.84 / 2.0.97: the 234-byte USB configuration descriptor is byte-identical (only product strings differ) and the sample path differs only in its 96-frame block; the battery threshold tables and power manager are identical; I2C1, EMIFA, TIMER64P2 and TIMER64P3 are unused everywhere. Differences: AUTO POWER OFF value 1 is 20 min in Lofi and CyDrums 2.0.97 (30 min in SmplTrek and CyDrums 1.1.84); Lofi and CyDrums have no USB TRACK SETTING page.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "USB descriptor assembled in c6sim per product (scratch usbdesc.py, same md5)",
+        "region_diff of the USB sample path",
+        "auto_power_off_apply constants and option strings per product",
+        "docs/01-platform-map.md \"Hardware use per product\""
+      ],
+      "notes": "2026-11-19. Whether BATTERY TYPE 2 (LITHIUM) is reachable in the Lofi and CyDrums menus is open."
+    }
+  ]
+}

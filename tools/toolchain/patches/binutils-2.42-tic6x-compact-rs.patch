@@ -1,0 +1,19 @@
+--- a/opcodes/tic6x-dis.c
++++ b/opcodes/tic6x-dis.c
+@@ -924,7 +924,15 @@
+ 		  fld_val <<= 1;
+ 		  /* Fall through.  */
+ 		case tic6x_coding_reg:
+-                  if (num_bits == 16 && header.rs && !(opc->flags & TIC6X_FLAG_INSN16_NORS))
++                  /* The header's RS bit moves only the 2- and 3-bit register
++                     fields of a compact instruction to the high register set.
++                     A 5-bit (composite) field names any of the 32 registers,
++                     as in the lsdmvto/lsdmvfr forms of MV, and a 1-bit field
++                     is a predicate register (A0/A1), as in the lx1c forms of
++                     CMPGT/CMPLT.  */
++                  if (num_bits == 16 && header.rs && !(opc->flags & TIC6X_FLAG_INSN16_NORS)
++                      && tic6x_field_width (field) >= 2
++                      && tic6x_field_width (field) <= 3)
+                     {
+ 		      reg_base = 16;
+                     }

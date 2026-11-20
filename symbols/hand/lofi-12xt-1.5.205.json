@@ -1,0 +1,1959 @@
+{
+  "format": "sonicware-symbols/1",
+  "source": {
+    "file": "Lofi-12XT_v1.5.205/Lofi-12 XT.bin",
+    "sha256": "a8bffa65919c0a2d4ff2ce77d16301551af4d2964497b8804deed49ce4198026",
+    "mmtd_version": "1.5.205"
+  },
+  "notes": [
+    "Hand-written per-product findings; merged into the generated file of the same name by carry_symbols.py. Edit this file, not the generated one.",
+    "confidence: confirmed = the whole function was read and does exactly this; probable = role inferred from consistent call sites, details may be wrong; speculative = a lead only."
+  ],
+  "symbols": [
+    {
+      "name": "g_audio_out_block",
+      "kind": "data",
+      "address": "0x11f03000",
+      "type": "AudioOutBlock",
+      "confidence": "probable",
+      "evidence": [
+        "Initialised (copy table) to {2, 96, 0, 0}: word 0 = channels, word 1 = frames per block; float L[96] at +16 (0x11F03010) and R[96] at +16+4*96 = +400 (0x11F03190), as written by audio_block_process (the same code as SmplTrek's, other constants). Passed to g_audio_render_callback. Lives in L2 SRAM, unlike SmplTrek's (DDR)."
+      ]
+    },
+    {
+      "name": "g_oled_framebuffer",
+      "kind": "data",
+      "address": "0xc2b2d700",
+      "type": "uint8_t[8192] (128x128, 4 bpp)",
+      "confidence": "probable",
+      "evidence": [
+        "Address constant in OLEDDriver::clear (0xC2CA8D88), OLEDDriver::flush (0xC2CA8D40) and OLEDDriver::framebuffer (0xC2CA8DC4) (memset / Cache_wb / send length 8192), at the places SmplTrek's identical code loads its g_oled_framebuffer (region_diff: only moved data addresses). draw_text_impl has the same 128 clip and (y << 7) + x indexing."
+      ]
+    },
+    {
+      "name": "g_oled_framebuffer_saved",
+      "kind": "data",
+      "address": "0xc2b2f700",
+      "type": "uint8_t[8192]",
+      "confidence": "probable",
+      "evidence": [
+        "The second 8 KiB buffer of OLEDDriver (copy target of vtable slot 3, cleared by slot 4, returned by slot 6), as in SmplTrek."
+      ]
+    },
+    {
+      "name": "g_settings",
+      "kind": "data",
+      "address": "0xc2b74984",
+      "type": "struct Settings (404 bytes)",
+      "confidence": "probable",
+      "evidence": [
+        "settings_validate (0xC2BD31AC) copies 404 bytes from the 'PREF' block here (memcpy at 0xC2BD322C: dest 0xC2B74984, size 404 in A6); SmplTrek copies 284. The MIDI channel words start at +0xCC and g_midi_settings at +0xDC (SmplTrek +0xC8 / +0xD8)."
+      ]
+    },
+    {
+      "name": "g_midi_channel_settings",
+      "kind": "data",
+      "address": "0xc2b74a50",
+      "type": "int[4] (MIDI > CHANNEL values)",
+      "confidence": "probable",
+      "evidence": [
+        "The MIDI CHANNEL page constructor (from 0xC2C60B44) loads each row's label with its value function and getter: [0] 0xC2B74A50 PROJ CH, [1] 0xC2B74A54 AUTO CH, [2] 0xC2B74A58 OUT CH, [3] 0xC2B74A5C PC CH. Immediately followed by g_midi_settings (0xC2B74A60): the same four-plus-nine word MIDI block in SmplTrek, Lofi-12 XT and CyDrums. Value encoding (channel numbering, AUTO/OFF values) not decoded."
+      ]
+    },
+    {
+      "name": "g_midi_settings",
+      "kind": "data",
+      "address": "0xc2b74a60",
+      "type": "int[9] (MIDI > CONFIG values)",
+      "confidence": "probable",
+      "evidence": [
+        "MIDI CONFIG rows tied to words by the page constructor (0xC2C05B9C on), which loads each label with its value function and getter: [0] 0xC2B74A60 IN FROM, [1] A64 OUT TO, [3] A6C TX NOTE, [4] A70 TX CC, [5] A74 CLK OUT, [6] A78 OUTTHRU, [7] A7C CMD, [8] A80 ACTSENS; PC at 0xC2B74A9C (+0x3C) and SPP at 0xC2B74B10 (+0xB0). Same order and encodings as SmplTrek's g_midi_settings except that word [2] (SmplTrek's PROGRAM CHANGE) has no MVK/MVKH reference here; PC lives at +0x3C instead.",
+        "+0xDC from the carried g_settings (0xC2B74984); SmplTrek's MIDI words are at g_settings+0xD8."
+      ]
+    },
+    {
+      "name": "g_midi_setting_pc",
+      "kind": "data",
+      "address": "0xc2b74a9c",
+      "type": "int",
+      "confidence": "probable",
+      "evidence": [
+        "PC row of MIDI CONFIG (constructor loads label 'PC' with getter 0xC2BD28D4 -> this word). 1/3 = RX (midi_rx_pc_enabled), 2/3 = TX (midi_tx_pc_enabled)."
+      ]
+    },
+    {
+      "name": "g_midi_setting_spp",
+      "kind": "data",
+      "address": "0xc2b74b10",
+      "type": "int",
+      "confidence": "probable",
+      "evidence": [
+        "SPP row of MIDI CONFIG (Lofi-12 XT only; constructor loads label 'SPP' with getter 0xC2BD2588 -> this word). 1/3 = RX (midi_rx_spp_enabled), 2/3 = TX (midi_tx_spp_enabled). SPP is presumably MIDI Song Position Pointer (inference from the label)."
+      ]
+    },
+    {
+      "name": "g_settings_ext",
+      "kind": "data",
+      "address": "0xc2b74fc0",
+      "type": "struct SettingsExt",
+      "confidence": "probable",
+      "evidence": [
+        "Loaded by settings_validate after the 'PREX' tag (0xC2DA3298), in the place SmplTrek's validator loads g_settings_ext. Size not read.",
+        "Correction: carry_symbols had put g_settings_ext at 0xC2DA3298, which holds the bytes 'PREX' (the tag), and g_settings_ext_tag here; this hand entry and the tag's entry swap them back."
+      ]
+    },
+    {
+      "name": "g_rotary_encoders_v2",
+      "kind": "data",
+      "address": "0xc2b7b9a0",
+      "type": "RotaryEncoderV2[5]",
+      "confidence": "probable",
+      "evidence": [
+        "Constructed by encoders_static_init (0xC2C8FEC0) with __cxa_vec_ctor: 5 objects of 36 bytes. encoders_init stores &g_rotary_encoders_v2[i] into g_encoders and i at +4 of each."
+      ]
+    },
+    {
+      "name": "g_encoders",
+      "kind": "data",
+      "address": "0xc2b7ef08",
+      "type": "RotaryEncoderInterface *[5]",
+      "confidence": "probable",
+      "evidence": [
+        "Passed by MainDelegate's setup (0xC2BAC9D0) to encoders_init and by the input poll (0xC2CAF7A0) to encoder_poll_all, which calls slot 0 of each entry. Holds pointers to g_rotary_encoders_v2; SmplTrek's g_encoders holds the objects themselves.",
+        "The poll call site is a compact fetch packet that objdump decodes with '|| nop 5' tails; the argument registers were read from the surrounding constant loads, recheck in Ghidra."
+      ]
+    },
+    {
+      "name": "MainDelegate::on_midi_realtime",
+      "kind": "function",
+      "address": "0xc2b9e6d0",
+      "prototype": "void MainDelegate::on_midi_realtime(MainDelegate *, MIDIInputPort *port, int byte)",
+      "confidence": "probable",
+      "evidence": [
+        "MainDelegate's MIDIInputPortDelegate (base +44) slot 6, through the thunk 0xC2B9EAA4 (a plain branch). Checks midi_rx_command_enabled and midi_rx_active_sens_enabled and reads tick_count, as in SmplTrek.",
+        "Vtable address point 0xC2D89A8C (+4*slot); replacing the slot entry there is the receive hook for this message type on all three ports."
+      ],
+      "prefix_sha256": "980f5acf5b70db9dc31affb9b853a76f"
+    },
+    {
+      "name": "MainDelegate::on_midi_program_change",
+      "kind": "function",
+      "address": "0xc2b9eaac",
+      "prototype": "void MainDelegate::on_midi_program_change(MainDelegate *, MIDIInputPort *port, const uint8_t *msg)",
+      "confidence": "probable",
+      "evidence": [
+        "MainDelegate's MIDIInputPortDelegate (base +44) slot 3, through the thunk 0xC2B9EBE4 (a plain branch). First call is midi_rx_pc_enabled, as in SmplTrek.",
+        "Vtable address point 0xC2D89A8C (+4*slot); replacing the slot entry there is the receive hook for this message type on all three ports."
+      ],
+      "prefix_sha256": "ea88496c93e2da65b52cdf0ecf0085f0"
+    },
+    {
+      "name": "MainDelegate::on_midi_control_change",
+      "kind": "function",
+      "address": "0xc2b9f6b0",
+      "prototype": "void MainDelegate::on_midi_control_change(MainDelegate *, MIDIInputPort *port, const uint8_t *msg)",
+      "confidence": "probable",
+      "evidence": [
+        "MainDelegate's MIDIInputPortDelegate (base +44) slot 2, through the thunk 0xC2B9F84C (a plain branch). Body not read.",
+        "Vtable address point 0xC2D89A8C (+4*slot); replacing the slot entry there is the receive hook for this message type on all three ports."
+      ],
+      "prefix_sha256": "9a3e52ebac78aa822b103fc8dd322c35"
+    },
+    {
+      "name": "MainDelegate::on_midi_system_common",
+      "kind": "function",
+      "address": "0xc2b9f854",
+      "prototype": "void MainDelegate::on_midi_system_common(MainDelegate *, MIDIInputPort *port, const uint8_t *msg)",
+      "confidence": "speculative",
+      "evidence": [
+        "MainDelegate's MIDIInputPortDelegate (base +44) slot 5, through the thunk 0xC2B9F964 (a plain branch). First calls include midi_rx_spp_enabled: Song Position Pointer (0xF2, a system common message) is handled here, gated by the SPP RX setting.",
+        "Vtable address point 0xC2D89A8C (+4*slot); replacing the slot entry there is the receive hook for this message type on all three ports."
+      ],
+      "prefix_sha256": "fbc809ef9c9942e68fa665705bc2f31b"
+    },
+    {
+      "name": "MainDelegate::on_midi_pitch_bend",
+      "kind": "function",
+      "address": "0xc2b9f9f4",
+      "prototype": "void MainDelegate::on_midi_pitch_bend(MainDelegate *, MIDIInputPort *port, const uint8_t *msg)",
+      "confidence": "probable",
+      "evidence": [
+        "MainDelegate's MIDIInputPortDelegate (base +44) slot 4, through the thunk 0xC2B9FB04 (a plain branch). Pitch bend (0xE0). SmplTrek leaves this slot at the empty default; Lofi-12 XT overrides it (it also has a SoundEngine::PitchBendDelegate base). Body not read.",
+        "Vtable address point 0xC2D89A8C (+4*slot); replacing the slot entry there is the receive hook for this message type on all three ports."
+      ],
+      "prefix_sha256": "a1f093d37f91766be093c73a11b3b5ed"
+    },
+    {
+      "name": "MainDelegate::on_midi_note_off",
+      "kind": "function",
+      "address": "0xc2ba054c",
+      "prototype": "void MainDelegate::on_midi_note_off(MainDelegate *, MIDIInputPort *port, const uint8_t *msg)",
+      "confidence": "probable",
+      "evidence": [
+        "MainDelegate's MIDIInputPortDelegate (base +44) slot 0, through the thunk 0xC2BA0784 (a plain branch). Note off (and note on with velocity 0); MIDIInputPort::handle_channel_message is identical to SmplTrek's (region_diff, 0 differences), so the slot meanings are the same. Body not read.",
+        "Vtable address point 0xC2D89A8C (+4*slot); replacing the slot entry there is the receive hook for this message type on all three ports."
+      ],
+      "prefix_sha256": "1e78be63387988b26fd0d6445ca13b99"
+    },
+    {
+      "name": "MainDelegate::on_midi_note_on",
+      "kind": "function",
+      "address": "0xc2ba1aa8",
+      "prototype": "void MainDelegate::on_midi_note_on(MainDelegate *, MIDIInputPort *port, const uint8_t *msg)",
+      "confidence": "probable",
+      "evidence": [
+        "MainDelegate's MIDIInputPortDelegate (base +44) slot 1, through the thunk 0xC2BA1CA8 (a plain branch). Body not read.",
+        "Vtable address point 0xC2D89A8C (+4*slot); replacing the slot entry there is the receive hook for this message type on all three ports."
+      ],
+      "prefix_sha256": "aeebfca5900ce409a97481c055b68630"
+    },
+    {
+      "name": "MainDelegate::on_pad_analog",
+      "kind": "function",
+      "address": "0xc2bac130",
+      "prototype": "void MainDelegate::on_pad_analog(ADControllerDelegate *this, ADControllerUART *uart, int channel, int value)",
+      "confidence": "probable",
+      "prefix_sha256": "7237d57270d75ea5d5a9228bf06b5f8c",
+      "evidence": [
+        "ADControllerDelegate slot 1 of MainDelegate (base offset 36; vtable 0xC2D89A64, thunk 0xC2BAC158). Same body as SmplTrek's MainDelegate::on_pad_analog: channel < 15 -> tail call pad_sensor_update(g_pad_sensor 0xC2B69D00, channel, value); channel 15 ignored."
+      ]
+    },
+    {
+      "name": "midi_tx_spp_enabled",
+      "kind": "function",
+      "address": "0xc2bcd2d0",
+      "prototype": "bool midi_tx_spp_enabled(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body read: calls the SPP getter 0xC2BD2588 (word 0xC2B74B10) and returns value 2 or 3 (TX bit). The word is tied to the SPP row of the MIDI CONFIG page by the page constructor, which loads the label, the row's value function and this getter together."
+      ],
+      "prefix_sha256": "107e9b0086b437e570ea03d62d51562c"
+    },
+    {
+      "name": "midi_rx_spp_enabled",
+      "kind": "function",
+      "address": "0xc2bcd2e8",
+      "prototype": "bool midi_rx_spp_enabled(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body read: calls the SPP getter 0xC2BD2588 (word 0xC2B74B10) and returns value 1 or 3 (RX bit). The word is tied to the SPP row of the MIDI CONFIG page by the page constructor, which loads the label, the row's value function and this getter together."
+      ],
+      "prefix_sha256": "1593add09eaf8d905d54904069a3c508"
+    },
+    {
+      "name": "midi_tx_pc_enabled",
+      "kind": "function",
+      "address": "0xc2bcda70",
+      "prototype": "bool midi_tx_pc_enabled(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body read: calls the PC getter 0xC2BD28D4 (word 0xC2B74A9C) and returns value 2 or 3 (TX bit). The word is tied to the PC row of the MIDI CONFIG page by the page constructor, which loads the label, the row's value function and this getter together."
+      ],
+      "prefix_sha256": "5f1ab549559db0bf8fca1cee572592d9"
+    },
+    {
+      "name": "midi_rx_pc_enabled",
+      "kind": "function",
+      "address": "0xc2bcdaa0",
+      "prototype": "bool midi_rx_pc_enabled(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body read: calls the PC getter 0xC2BD28D4 (word 0xC2B74A9C) and returns value 1 or 3 (RX bit). The word is tied to the PC row of the MIDI CONFIG page by the page constructor, which loads the label, the row's value function and this getter together."
+      ],
+      "prefix_sha256": "5d66809beb4298fdb2a7ff5ff4169b8b"
+    },
+    {
+      "name": "midi_rx_active_sens_enabled",
+      "kind": "function",
+      "address": "0xc2bcdad0",
+      "prototype": "bool midi_rx_active_sens_enabled(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body read: calls the ACTSENS getter 0xC2BD28F8 (word 0xC2B74A80) and returns value 1 or 3 (RX bit). The word is tied to the ACTSENS row of the MIDI CONFIG page by the page constructor, which loads the label, the row's value function and this getter together."
+      ],
+      "prefix_sha256": "34f39c0c7052c176ad05083f8a09198b"
+    },
+    {
+      "name": "midi_tx_command_enabled",
+      "kind": "function",
+      "address": "0xc2bcece8",
+      "prototype": "bool midi_tx_command_enabled(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body read: calls the CMD getter 0xC2BD2D50 (word 0xC2B74A7C) and returns value 2 or 3 (TX bit). The word is tied to the CMD row of the MIDI CONFIG page by the page constructor, which loads the label, the row's value function and this getter together."
+      ],
+      "prefix_sha256": "367e4eb9a5faeff548a6f88135599c9c"
+    },
+    {
+      "name": "midi_rx_command_enabled",
+      "kind": "function",
+      "address": "0xc2bced00",
+      "prototype": "bool midi_rx_command_enabled(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body read: calls the CMD getter 0xC2BD2D50 (word 0xC2B74A7C) and returns value 1 or 3 (RX bit). The word is tied to the CMD row of the MIDI CONFIG page by the page constructor, which loads the label, the row's value function and this getter together."
+      ],
+      "prefix_sha256": "3543815e2f08bf6eb9cb566d69ce7116"
+    },
+    {
+      "name": "midi_output_to_din",
+      "kind": "function",
+      "address": "0xc2bcf1ec",
+      "prototype": "bool midi_output_to_din(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body read: calls the OUT TO getter 0xC2BD2C84 (word 0xC2B74A64) and returns value 1 or 3 (MIDI DIN). The word is tied to the OUT TO row of the MIDI CONFIG page by the page constructor, which loads the label, the row's value function and this getter together.",
+        "Correction: carry_symbols put midi_rx_command_enabled here (same body shape as the other 1-or-3 tests); this function reads OUT TO, not CMD. Lofi-12 XT's CMD RX test is at 0xC2BCED00."
+      ],
+      "prefix_sha256": "0c35611a10244f7c3e3732fbc211a1c3"
+    },
+    {
+      "name": "midi_output_to_usb",
+      "kind": "function",
+      "address": "0xc2bcf3c8",
+      "prototype": "bool midi_output_to_usb(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body read: calls the OUT TO getter 0xC2BD2C84 (word 0xC2B74A64) and returns value 2 or 3 (USB). The word is tied to the OUT TO row of the MIDI CONFIG page by the page constructor, which loads the label, the row's value function and this getter together."
+      ],
+      "prefix_sha256": "60cc6938a19c3c0a00a9f634d845ef1f"
+    },
+    {
+      "name": "midi_setting_pc_channel",
+      "kind": "function",
+      "address": "0xc2bd2544",
+      "prototype": "int midi_setting_pc_channel(void)",
+      "confidence": "probable",
+      "evidence": [
+        "One-instruction getter of 0xC2B74A5C (PC CH row of MIDI CHANNEL, tied by the page constructor)."
+      ],
+      "prefix_sha256": "be2e376f123a39e89f934a92830ff038"
+    },
+    {
+      "name": "midi_setting_output_channel",
+      "kind": "function",
+      "address": "0xc2bd2604",
+      "prototype": "int midi_setting_output_channel(void)",
+      "confidence": "probable",
+      "evidence": [
+        "One-instruction getter of 0xC2B74A58 (OUT CH row of MIDI CHANNEL, tied by the page constructor)."
+      ],
+      "prefix_sha256": "d742e775c8c23b3c64b02a58b1f274ab"
+    },
+    {
+      "name": "midi_setting_project_channel",
+      "kind": "function",
+      "address": "0xc2bd2818",
+      "prototype": "int midi_setting_project_channel(void)",
+      "confidence": "probable",
+      "evidence": [
+        "One-instruction getter of 0xC2B74A50 (PROJ CH row of MIDI CHANNEL, tied by the page constructor)."
+      ],
+      "prefix_sha256": "161cce0eaa7748474a245f2627e914e1"
+    },
+    {
+      "name": "midi_setting_auto_channel",
+      "kind": "function",
+      "address": "0xc2bd2ab0",
+      "prototype": "int midi_setting_auto_channel(void)",
+      "confidence": "probable",
+      "evidence": [
+        "One-instruction getter of 0xC2B74A54 (AUTO CH row of MIDI CHANNEL, tied by the page constructor)."
+      ],
+      "prefix_sha256": "c6ce2a1d34d85f13d3ad182e93f0a49c"
+    },
+    {
+      "name": "midi_setting_output_to",
+      "kind": "function",
+      "address": "0xc2bd2c84",
+      "prototype": "int midi_setting_output_to(void)",
+      "confidence": "probable",
+      "evidence": [
+        "One-instruction getter of 0xC2B74A64, loaded by the MIDI CONFIG constructor with the label 'OUT TO'."
+      ],
+      "prefix_sha256": "970de06f69e20c810d1936b0847ee843"
+    },
+    {
+      "name": "settings_validate",
+      "kind": "function",
+      "address": "0xc2bd31ac",
+      "prototype": "int settings_validate(const uint8_t *block, int size)",
+      "confidence": "probable",
+      "evidence": [
+        "Compares the block with the 'PREF' tag (0xC2DA32A0) byte by byte; on a match memcpy(&g_settings, block, 404). Then handles the 'PREX' part with g_settings_ext (0xC2B74FC0); that half and the defaults path are not read. Called twice by settings_load (0xC2C8B264, 0xC2C8B2B8), as in SmplTrek.",
+        "Clamp section (2026-11-10, 01-platform-map.md 'PREF fields'): from 0xC2BD33A8, A4 = a10 + K with a10 = g_settings (0xC2B74984, set at 0xC2BD3224 on both paths); helpers 0xC2BD2F30-0xC2BD3190. Same order as SmplTrek's with Lofi-12 XT ranges (e.g. +0x54 [1,130]/129, +0x50 [1,16]/4), the 8-word array at +0x90, MIDI channels +0xCC..+0xD8, MIDI NOTE MAP +0x164 [-1,15]/-1 and +0x168..+0x184 [0,127] with defaults 36,38,47,39,58,42,46,49, SPP +0x18C [0,3]/0. +0x58 is clamped twice (0xC2BD343C and 0xC2BD3444, same instruction word); +0x60 is overwritten on every load (stw a16 at 0xC2BD346C)."
+      ],
+      "prefix_sha256": "860bd2580f72a73629dca5fbea34e72f"
+    },
+    {
+      "address": "0xc2c5c7f0",
+      "name": "ADControllerUART::set_task_priority",
+      "kind": "function",
+      "prototype": "void ADControllerUART::set_task_priority(ADControllerUART *this, int priority)",
+      "confidence": "probable",
+      "evidence": [
+        "Whole body: tail call task_handler_set(this + 4, B4) with B4 unchanged. Only caller: MainDelegate setup (0xC2BACE1C) with g_ad_controller_uart. Correction 2026-11-10: the caller does load B4: MVK 12 into B4 is in the call's execute packet (0xC2BACE24, p-bits decoded; objdump shows it as a parallel '||' line after the call), so the panel task runs at priority 12. SmplTrek's copy has a fixed 13."
+      ],
+      "prefix_sha256": "3e68292d85890e1672ab46222a71ba71"
+    },
+    {
+      "name": "audio_block_isr",
+      "kind": "function",
+      "address": "0xc2c61980",
+      "prototype": "void audio_block_isr(void)",
+      "confidence": "probable",
+      "prefix_sha256": "f482edf7d3857e39cec856cf731d4ac2",
+      "evidence": [
+        "Same shape as SmplTrek's audio_block_isr: increments the block counter at B14+848, posts the audio Swi (B14+1440) with Swi_post, and calls audio_clock_probe_tick every 500 blocks (SmplTrek: 375), i.e. once per second with 96-frame blocks at 48 kHz."
+      ]
+    },
+    {
+      "name": "audio_block_process",
+      "kind": "function",
+      "address": "0xc2c619d4",
+      "prototype": "void audio_block_process(void)",
+      "confidence": "probable",
+      "prefix_sha256": "a63b8b8121e4e8dae7a74c19fec99c93",
+      "evidence": [
+        "Follows audio_block_isr as in SmplTrek. Calls the render callback from B14+844 (g_audio_render_callback); its sample loop runs 48 iterations of 2 frames (SmplTrek 64), so 96 frames per block."
+      ]
+    },
+    {
+      "name": "pad_velocity_from_curve",
+      "kind": "function",
+      "address": "0xc2c69b0c",
+      "prototype": "int pad_velocity_from_curve(int raw, int mode)",
+      "confidence": "probable",
+      "prefix_sha256": "6410cb9b4a38747863ae9b816b95b5ae",
+      "evidence": [
+        "Paired with SmplTrek 3.2.174 pad_velocity_from_curve 0xc1657540 by normalised body similarity 0.94 (best candidate within 0x800 of the curve lookup; next best below 0.5).",
+        "Loads g_pad_velocity_curves (0xC2D87168) + mode*512 and binary-searches the 128 thresholds, as in SmplTrek."
+      ]
+    },
+    {
+      "name": "pad_velocity",
+      "kind": "function",
+      "address": "0xc2c69c58",
+      "prototype": "int pad_velocity(void *this, int raw)",
+      "confidence": "probable",
+      "prefix_sha256": "6f8b5aa791698bfe4f24add0c67c81fc",
+      "evidence": [
+        "Paired with SmplTrek 3.2.174 pad_velocity 0xc1657690 by normalised body similarity 0.95 (best candidate within 0x800 of the curve lookup; next best below 0.5)."
+      ]
+    },
+    {
+      "name": "pad_sensor_update",
+      "kind": "function",
+      "address": "0xc2c69f54",
+      "prototype": "void pad_sensor_update(PadSensor *this, int pad, int raw)",
+      "confidence": "probable",
+      "prefix_sha256": "b0f7db5776e884e336ad9eb1190057f4",
+      "evidence": [
+        "Reached from MainDelegate::on_pad_analog for channels 0-14 (so this is the product's pad sensor processing). A different, larger function than SmplTrek's (about 250 instructions against 163; body similarity 0.19); release after 4 low samples as in SmplTrek. Press threshold 800 and release threshold 100 as in SmplTrek."
+      ]
+    },
+    {
+      "name": "control_switch_poll",
+      "kind": "function",
+      "address": "0xc2c86540",
+      "prototype": "void control_switch_poll(ControlSwitchScanner *this, ControlSwitchDelegate *d)",
+      "confidence": "probable",
+      "prefix_sha256": "1dd3707e2998b4d92d3b9d0978741bf9",
+      "evidence": [
+        "Same algorithm as SmplTrek's control_switch_poll (read by hand side by side): reads the hardware source through its vtable (+4, +20), builds the 64-bit reading, compares with the previous reading at this+32 and keeps the held word at this+64 (= g_control_switch_state). The source pointer is at this+24 (SmplTrek +20). Compiled differently, so func_match does not pair it. Reached from the same poll loop as in SmplTrek (tail branch after the scanner reference)."
+      ]
+    },
+    {
+      "name": "encoders_static_init",
+      "kind": "function",
+      "address": "0xc2c8fec0",
+      "prototype": "void encoders_static_init(void)",
+      "confidence": "confirmed",
+      "evidence": [
+        "Whole body read: tail-calls __cxa_vec_ctor (0xC2CC6840, matched by bytes to the TI runtime) with (g_rotary_encoders_v2, 5, 36, RotaryEncoderV2::RotaryEncoderV2, 0). Listed in .init_array (word at 0xC2DA6E28), so it runs unconditionally during C++ static initialisation.",
+        "This is the only construction of encoder objects: RotaryEncoder::RotaryEncoder has no call, no address constant and no data word pointing at it, so the V1/V2 choice is fixed at build time, not by hardware revision."
+      ],
+      "prefix_sha256": "349545677149162efcf088638c40cf8b"
+    },
+    {
+      "name": "RotaryEncoderInterface::RotaryEncoderInterface",
+      "kind": "function",
+      "address": "0xc2c8fee0",
+      "prototype": "RotaryEncoderInterface *RotaryEncoderInterface::RotaryEncoderInterface(RotaryEncoderInterface *this)",
+      "confidence": "probable",
+      "evidence": [
+        "Stores the RotaryEncoderInterface vtable address point 0xC2DA0E08 at +0 and zeroes +4..+24. Called by both derived constructors."
+      ],
+      "prefix_sha256": "7d81d6d9f6e7db3f676cfef1c595dd72"
+    },
+    {
+      "name": "RotaryEncoderV2::RotaryEncoderV2",
+      "kind": "function",
+      "address": "0xc2c8ffa4",
+      "prototype": "RotaryEncoderV2 *RotaryEncoderV2::RotaryEncoderV2(RotaryEncoderV2 *this)",
+      "confidence": "probable",
+      "evidence": [
+        "Calls the base constructor, stores the RotaryEncoderV2 vtable address point 0xC2DA0DD8, sets +12 (last phase) = 3 and +28 (last detent time) = +32 (armed) = 0."
+      ],
+      "prefix_sha256": "a55cd35118dc0ad44a47451d7661f6e0"
+    },
+    {
+      "name": "RotaryEncoder::update",
+      "kind": "function",
+      "address": "0xc2c8ffe8",
+      "prototype": "void RotaryEncoder::update(RotaryEncoder *this, int phase)",
+      "confidence": "probable",
+      "evidence": [
+        "RotaryEncoder vtable slot 0 (the RTTI file's RotaryEncoder::vfunc_0). The SmplTrek encoder_update algorithm with a vptr in front (see SmplTrek's entry): steps accumulate and are reported every 16 calls, no acceleration.",
+        "Dead code in this image: no RotaryEncoder object is ever constructed (see encoders_static_init)."
+      ],
+      "prefix_sha256": "d4d94e247c74ad14881eb4b057db095c"
+    },
+    {
+      "name": "RotaryEncoderV2::update",
+      "kind": "function",
+      "address": "0xc2c90108",
+      "prototype": "void RotaryEncoderV2::update(RotaryEncoderV2 *this, int phase, unsigned now)",
+      "confidence": "probable",
+      "evidence": [
+        "RotaryEncoderV2 vtable slot 0. Object: +4 index, +8 RotaryEncoderDelegate *, +12 last phase, +16 direction state, +28 time of the last rest position, +32 armed flag. Phase 3 (rest) clears the state and records now in +28; the first change after it sets the direction (phase 1 -> state 2, phase 2 -> state 1) and arms; the next change fires once and disarms: one report per detent, not every 16 calls.",
+        "Step size: dt = now - (+28); if now >= (+28) (no wrap) and dt/2 < 9 the step is g_encoder_accel_table[dt/2] (12, 10, 8, 6, 5, 4, 3, 2, 1), else 1; negated for state 2. now is tick_count() (0xC2CEC340) from the input poll. So fast turns move up to 12 per detent; SmplTrek 3.2.174 has no such acceleration.",
+        "Calls delegate slot 0 (delegate, this, index, step), the same (encoder, delta) shape as SmplTrek's post_encoder_event. Same front end as CyDrums' copy (read side by side); the output differs there."
+      ],
+      "prefix_sha256": "4ada8b9cb3c881e60e67ccb3b185564b"
+    },
+    {
+      "name": "encoder_poll_all",
+      "kind": "function",
+      "address": "0xc2c90254",
+      "prototype": "void encoder_poll_all(RotaryEncoderInterface *enc[5], unsigned now)",
+      "confidence": "probable",
+      "evidence": [
+        "Calls encoder_read_phases once, then enc[i]->update((bits >> 2i) & 3, now) through vtable slot 0 for i = 0..4, skipping null entries. SmplTrek's version calls encoder_update directly on inline objects and has no time argument.",
+        "Same instructions as CyDrums 1.1.84's copy apart from scheduling (normalised listings diffed)."
+      ],
+      "prefix_sha256": "bd937668168105efbb2c39ae3088a86a"
+    },
+    {
+      "name": "encoders_init",
+      "kind": "function",
+      "address": "0xc2c90358",
+      "prototype": "void encoders_init(RotaryEncoderInterface *enc[5])",
+      "confidence": "probable",
+      "evidence": [
+        "Calls encoder_pinmux_init and pupd_set_19_20(0) (same bytes as SmplTrek's 0xC1690814), then stores &g_rotary_encoders_v2[i] in enc[i] and i at +4 of each object (36-byte stride).",
+        "Loop decoded 2026-11-10 by compiler equivalence: TI cl6x 8.3.13/8.3.9 -O2 -mv6740 compiles `for (int i = 0; i < 5; i++) { enc[i] = &g_v2[i]; enc[i]->index = i; }` (36-byte RotaryEncoderV2, index at +4) to this exact loop (MVK 1 -> ILC, SPLOOPD 1 || MV A10,A4 || ZERO B5 || ADD 4,A3,B4; body ADD 1,B5,B5 || STW A3,*A4++ || STW B5,*B4++(36) || ADDK 36,A3). So enc[i] = &g_rotary_encoders_v2[i] with index i, i = 0..4."
+      ],
+      "prefix_sha256": "ee7e73eea0307e7a835bb1e474664968"
+    },
+    {
+      "name": "RotaryEncoder::RotaryEncoder",
+      "kind": "function",
+      "address": "0xc2c903a8",
+      "prototype": "RotaryEncoder *RotaryEncoder::RotaryEncoder(RotaryEncoder *this)",
+      "confidence": "probable",
+      "evidence": [
+        "Calls the base constructor and stores the RotaryEncoder vtable address point 0xC2DA0DA8. Unreferenced: no call, no MVK/MVKH constant (string_refs) and no aligned data word equal to its address anywhere in the image."
+      ],
+      "prefix_sha256": "2c05ee812ee31aaee680b9891b3e6ec9"
+    },
+    {
+      "name": "clock_tick",
+      "kind": "function",
+      "address": "0xc2cd8fc0",
+      "prototype": "void clock_tick(void)",
+      "confidence": "probable",
+      "evidence": [
+        "Increments the word at 0xC2DA7168 (the counter tick_count returns) and then calls two further routines: the SYS/BIOS Clock tick (Clock_doTick-like; name inferred). Its address is the tick function stored in the timer object whose period word is at 0xC2D80A20 (decompressed copy-table data).",
+        "Same code in SmplTrek 3.2.174 (0xC169C340), Lofi-12 XT 1.5.205 (0xC2CD8FC0) and CyDrums 1.1.84 (0xC25FF6C0): region_diff, 16 vs 16 instructions, only moved data addresses."
+      ],
+      "prefix_sha256": "11448db0987aa6b0dbe0b632779ddedf"
+    },
+    {
+      "name": "g_clock_timer_period",
+      "kind": "data",
+      "address": "0xc2d80a20",
+      "type": "uint32_t",
+      "confidence": "probable",
+      "evidence": [
+        "Word 1000 (0x3E8) in initialised data (decoded from the copy table with memory_map.build_map), followed by 0 (periodType, read as microseconds), interrupt number 14 and the tick function clock_tick: the timer that drives the SYS/BIOS Clock. So one Clock tick = 1000 us = 1 ms. Field layout read against SYS/BIOS's timer object as an inference; the same words appear in all three products. A 24000000 (24 MHz timer input) table is nearby in the same data."
+      ]
+    },
+    {
+      "name": "g_pad_velocity_curves",
+      "kind": "data",
+      "address": "0xc2d87168",
+      "type": "int[3][128]",
+      "confidence": "probable",
+      "evidence": [
+        "Byte-identical to SmplTrek's g_pad_velocity_curves (0xC16B8EF0, 1536 bytes: three 128-entry threshold curves); referenced by pad_velocity_from_curve."
+      ]
+    },
+    {
+      "name": "g_encoder_accel_table",
+      "kind": "data",
+      "address": "0xc2d989a0",
+      "type": "int[9]",
+      "confidence": "confirmed",
+      "evidence": [
+        "Image data {12, 10, 8, 6, 5, 4, 3, 2, 1}, copied to the stack by RotaryEncoderV2::update and indexed by (time since the last rest position) / 2. The same values in CyDrums 1.1.84 (0xC26A10F0)."
+      ]
+    },
+    {
+      "name": "g_settings_ext_tag",
+      "kind": "data",
+      "address": "0xc2da3298",
+      "type": "char[4]",
+      "confidence": "confirmed",
+      "evidence": [
+        "Image bytes 'PREX' (checked). Loaded by settings_validate (0xC2BD323C, 0xC2BD3288)."
+      ]
+    },
+    {
+      "name": "g_audio_render_callback",
+      "kind": "data",
+      "address": "0xc2da6aa4",
+      "type": "void (*)(AudioOutBlock *)",
+      "confidence": "probable",
+      "evidence": [
+        "B14+844. Stored by audio_set_render_callback (stw a4,*+b14(844)) and called by audio_block_process. SmplTrek: B14+904."
+      ]
+    },
+    {
+      "name": "g_audio_swi",
+      "kind": "data",
+      "address": "0xc2da6cf8",
+      "type": "Swi_Handle",
+      "confidence": "probable",
+      "evidence": [
+        "B14+1440. Posted by audio_block_isr every block. SmplTrek: B14+1464."
+      ]
+    },
+    {
+      "name": "g_clock_ticks",
+      "kind": "data",
+      "address": "0xc2da7168",
+      "type": "uint32_t",
+      "confidence": "probable",
+      "evidence": [
+        "SYS/BIOS Clock tick count: incremented by clock_tick, returned by tick_count. One tick is 1 ms (see g_clock_timer_period)."
+      ]
+    },
+    {
+      "address": "0xc2c8b0f8",
+      "name": "settings_save",
+      "kind": "function",
+      "prototype": "int settings_save(void)",
+      "confidence": "probable",
+      "prefix_sha256": "4462b279c3d7f2c58216f6f5ece7279c",
+      "evidence": [
+        "Same code as SmplTrek's settings_save with settings_sector_write_verify before it (0xC2C8AFA8): region_diff 0xC159CC34-0xC159CF70 --at 0xC2C8AFA8 finds 30 moved data addresses and 47 other differences, all or/mv encodings, branch offsets and scheduling; the flash addresses 0x01FFF000 / 0x01FFFC00 / 0x01FFE000 / 0x01FFEC00 and 4096-byte lengths are the same. Not paired by func_match.",
+        "Entries: the direct call at 0xC2BAD7B8 and settings_reset_and_save (0xC2C8B204, tail call). The direct caller calls tick_count right after (B 0xC2CEC340 at 0xC2BAD7BC), which overwrites A4, so the return value is never used.",
+        "Fill callbacks (2026-11-10): settings_pref_fill 0xC2BD1FF0 (404 bytes of g_settings) and settings_prex_fill 0xC2BD2DF4 (380 bytes of g_settings_ext); erase with request_erase 0xC2C1F6E4 (sector, 4096, -1), as in SmplTrek."
+      ]
+    },
+    {
+      "address": "0xc2c8b2d0",
+      "name": "flash_headers_request",
+      "kind": "function",
+      "prototype": "void flash_headers_request(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "61109c921e5ccc6a56be0cad07de83fe",
+      "evidence": [
+        "Sets bits 0-1 (|= 3) in g_flash_delegate+4 (0xC2B80930), then request_read(&g_flash_memory_driver, flash_select_address(0x0003FFE4), g_boot_header, 128, 1) and request_read(..., flash_select_address(0x00040000), g_system_header, 128, 2) (asynchronous ids). Values from the one-instruction getters 0xC2C800C8 (MVK -28 / MVKH 0x30000 = 0x3FFE4), 0xC2C800C0 (SET a4,18,18 = 0x40000), 0xC2C8050C / 0xC2C804EC (0xC2B7C700 / 0xC2B7C780), 0xC2C804D4 / 0xC2C80340 (128, compact MVK decoded by objdump). Unlike SmplTrek there is no read of the 'pmtd' header at 0x440000.",
+        "Only caller 0xC2BACA40 (MainDelegate code). Together with settings_load and the verify read in the settings writer, these are all five request_read call sites in Lofi-12 XT 1.5.205: the app reads nothing else from flash (no content partitions)."
+      ]
+    },
+    {
+      "address": "0xc2cce760",
+      "name": "FlashDelagate::on_read_done",
+      "kind": "function",
+      "prototype": "void FlashDelagate::on_read_done(FlashDelagate *this, ..., int id)",
+      "confidence": "probable",
+      "prefix_sha256": "69c7201a52b692c29f167a75555a8382",
+      "evidence": [
+        "Request id in B6: 1 -> g_boot_header (0xC2C8050C), 2 -> g_system_header (0xC2C804EC); cache invalidate over 128 bytes (0xC2CDDE40) and clears the id's bit in this+4. Same structure as SmplTrek's 0xC168D8C0 without the id-4 case. Starts after zero padding at 0xC2CCE74C."
+      ]
+    },
+    {
+      "address": "0xc2b8092c",
+      "name": "g_flash_delegate",
+      "kind": "data",
+      "type": "FlashDelagate",
+      "confidence": "probable",
+      "evidence": [
+        "flash_headers_request sets bits in 0xC2B80930 = this+4 (pending header reads); 0xC2C8B368 stores 0xC2B8092C into 0xC2B7E3FC = g_flash_memory_driver+16, the driver's delegate pointer."
+      ]
+    },
+    {
+      "address": "0xc2bd20d8",
+      "name": "settings_set_defaults",
+      "kind": "function",
+      "prototype": "void settings_set_defaults(void)",
+      "confidence": "probable",
+      "prefix_sha256": "c80d7b68f7690615433bbdd736199704",
+      "evidence": [
+        "Called by settings_reset_and_save (0xC2C8B204) before the tail call to settings_save; loads the 'PREF' tag (0xC2DA32A0) and g_settings (0xC2B74984) first, like SmplTrek's 0xC1594CAC. Only the first packets read."
+      ]
+    },
+    {
+      "address": "0xc2b7c880",
+      "name": "g_preset_header",
+      "kind": "data",
+      "type": "uint8_t[128]",
+      "confidence": "probable",
+      "evidence": [
+        "Checked against 'pmtd' by preset_version_string (0xC2C7FFA0, carried), but no request_read in Lofi-12 XT fills it (flash_headers_request reads only the boot and system headers), so it keeps its initial contents. Lofi-12 XT's SYSTEM INFO page has VERSION / BOOT / SYSTEM rows only (no PRESET string)."
+      ]
+    },
+    {
+      "address": "0xc2ccb3a4",
+      "name": "private_led_task_start",
+      "kind": "function",
+      "prototype": "void private_led_task_start(int priority)",
+      "confidence": "confirmed",
+      "prefix_sha256": "a67cd49449a9994de3ed0ddc2f417395",
+      "evidence": [
+        "task_handler_bind(&g_private_led_task, *(B14+1452) = task 8, 4 KiB stack), then task_handler_set(&g_private_led_task, priority from A4). MainDelegate code calls it with 11 (0xC2BACEF4 region)."
+      ]
+    },
+    {
+      "address": "0xc2ccb464",
+      "name": "private_pattern_task_start",
+      "kind": "function",
+      "prototype": "void private_pattern_task_start(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "b26433164bbc05564f6fa0d0a56c6c70",
+      "evidence": [
+        "task_handler_bind(&g_private_pattern_task, *(B14+1492) = task 10, 4 KiB stack), then task_handler_set(..., 15): the highest application task priority in Lofi-12 XT."
+      ]
+    },
+    {
+      "address": "0xc2b8094c",
+      "name": "g_private_led_task",
+      "kind": "data",
+      "type": "PrivateLEDTask",
+      "confidence": "probable",
+      "evidence": [
+        "vptr 0xC2DA0DB8 (PrivateLEDTask, RTTI) stored at 0xC2CCB3A0."
+      ]
+    },
+    {
+      "address": "0xc2b8096c",
+      "name": "g_private_pattern_task",
+      "kind": "data",
+      "type": "PrivatePatternTask",
+      "confidence": "probable",
+      "evidence": [
+        "vptr 0xC2DA0DF8 (PrivatePatternTask, RTTI) stored at 0xC2CCB460."
+      ]
+    },
+    {
+      "address": "0xc2ccdf00",
+      "name": "async_task_handler_start",
+      "kind": "function",
+      "prototype": "void async_task_handler_start(int priority)",
+      "confidence": "confirmed",
+      "prefix_sha256": "57298bce625bcad86b04c2d770e3b6fc",
+      "evidence": [
+        "task_handler_bind(0xC2B8093C, *(B14+1332) = task 0, 64 KiB), then task_handler_set(..., A4). Called with 7 (0xC2BACF00 region). SmplTrek's copy has 7 built in."
+      ]
+    },
+    {
+      "address": "0xc2b8093c",
+      "name": "g_async_task_handler",
+      "kind": "data",
+      "type": "AsyncTaskHandler",
+      "confidence": "probable",
+      "evidence": [
+        "vptr 0xC2DA0DE8 (AsyncTaskHandler) stored by 0xC2CCDEC0; task 0 (64 KiB), priority 7."
+      ]
+    },
+    {
+      "address": "0xc2ccb964",
+      "name": "usb_start",
+      "kind": "function",
+      "prototype": "void usb_start(int priority)",
+      "confidence": "confirmed",
+      "prefix_sha256": "11a3757928a83f2b79aff8463523b543",
+      "evidence": [
+        "0xC2C295A4(0xC2D52FFC) (stores the USB audio delegate at B14+732), then usb_task_start(0xC2B809C8 = USBTaskHandler object, B4 = A4 on entry). MainDelegate setup calls it with 13 (0xC2BACDB0); SmplTrek fixes 14."
+      ]
+    },
+    {
+      "address": "0xc2ce1800",
+      "name": "usb_task_start",
+      "kind": "function",
+      "prototype": "void usb_task_start(TaskHandler *th, int priority)",
+      "confidence": "confirmed",
+      "prefix_sha256": "05b283642199c2e00dbba1abaeb2c8b1",
+      "evidence": [
+        "task_handler_bind(th, *(B14+1412) = task 4), then task_handler_set(th, B4)."
+      ]
+    },
+    {
+      "address": "0xc2bd2010",
+      "name": "settings_changed",
+      "kind": "function",
+      "prototype": "int settings_changed(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "f2d3b880356d3bf3daf4942bf07eb9db",
+      "evidence": [
+        "Same as SmplTrek's settings_changed (0xC1594BEC) with this product's sizes: compares g_settings (0xC2B74984) with its shadow 0xC2B74B18 (404 bytes), then g_settings_ext (0xC2B74FC0) with 0xC2B7513C (380 bytes); returns 1 if any byte differs. First call in settings_save (0xC2C8B104). Not carried by func_match."
+      ]
+    },
+    {
+      "address": "0xc2bd1ff0",
+      "name": "settings_pref_fill",
+      "kind": "function",
+      "prototype": "int settings_pref_fill(void *buf)",
+      "confidence": "confirmed",
+      "prefix_sha256": "48b353e52ccf3bd1690f5f9c71d90fa0",
+      "evidence": [
+        "memcpy(buf, &g_settings (0xC2B74984), 404); returns 404. Its address (mvk 8176 + mvkh 0xC2BD0000) is passed by settings_save as the fill callback for the PREF halves (0x01FFF000, 0x01FFE000)."
+      ]
+    },
+    {
+      "address": "0xc2bd2df4",
+      "name": "settings_prex_fill",
+      "kind": "function",
+      "prototype": "int settings_prex_fill(void *buf)",
+      "confidence": "confirmed",
+      "prefix_sha256": "40b4cc017bffe0ae41a986fa985b64d0",
+      "evidence": [
+        "memcpy(buf, &g_settings_ext (0xC2B74FC0), 380); returns 380. The fill callback for the PREX halves (0x01FFFC00, 0x01FFEC00; address mvk 11764 + mvkh 0xC2BD0000 in settings_save). So Lofi-12 XT writes 380 bytes of g_settings_ext to PREX although its validator never reads them back."
+      ]
+    },
+    {
+      "address": "0xc2c8afa8",
+      "name": "settings_sector_write_verify",
+      "kind": "function",
+      "prototype": "int settings_sector_write_verify(uint32_t addr, int (*fill)(void *buf))",
+      "confidence": "probable",
+      "prefix_sha256": "d48bf57f30e024be9da7d8ca4003f711",
+      "evidence": [
+        "Same code as SmplTrek's 0xC159CC34 (region_diff, see settings_save): clears the 8 KiB buffer 0xC2B35700 (the buffer settings_load also reads into), calls fill, programs bytes 4..len-1, reads back and compares, then programs the 4-byte tag. Not carried by func_match."
+      ]
+    },
+    {
+      "address": "0xc2c622e4",
+      "name": "mcasp0_isr",
+      "kind": "function",
+      "prototype": "void mcasp0_isr(void)",
+      "confidence": "probable",
+      "prefix_sha256": "ffbf1c17b40684cb286f6c045c97578d",
+      "evidence": [
+        "Function of the static Hwi for interrupt 6 / event 61 (Hwi dispatch table in g_hwi_module_state (2026-11-10)); same code as SmplTrek's 0xC16218C4 (region_diff: IntEventClear(61) tail call). Not carried by func_match."
+      ]
+    },
+    {
+      "address": "0xc2c4bd24",
+      "name": "i2c0_isr",
+      "kind": "function",
+      "prototype": "void i2c0_isr(void)",
+      "confidence": "probable",
+      "prefix_sha256": "cdac7bd1043dfe7c5d50e443f809efa9",
+      "evidence": [
+        "Function of the static Hwi for interrupt 4 / event 36 (Hwi dispatch table in g_hwi_module_state (2026-11-10)); same code as SmplTrek's 0xC160CEA4 (region_diff 228 instructions, only moved data addresses). Not carried."
+      ]
+    },
+    {
+      "address": "0xc2cc7124",
+      "name": "usb0_isr",
+      "kind": "function",
+      "prototype": "void usb0_isr(void)",
+      "confidence": "probable",
+      "prefix_sha256": "b25474ffdbbe7443bda54a4907b13ab9",
+      "evidence": [
+        "Function of the static Hwi for interrupt 12 / event 19 (Hwi dispatch table in g_hwi_module_state (2026-11-10)); same code as SmplTrek's 0xC168B2E4 (region_diff 49 instructions). Not carried."
+      ]
+    },
+    {
+      "address": "0xc2d7cdd8",
+      "name": "g_hwi_objects",
+      "kind": "data",
+      "type": "SYS/BIOS Hwi objects, 9 x 24 bytes",
+      "confidence": "probable",
+      "evidence": [
+        "Lowest of the nine Hwi handles in the Hwi dispatch table in g_hwi_module_state (2026-11-10); same nine interrupt / event / handler set as SmplTrek."
+      ]
+    },
+    {
+      "address": "0xc2d7ff60",
+      "name": "g_clock_swi_object",
+      "kind": "data",
+      "type": "SYS/BIOS Swi object",
+      "confidence": "probable",
+      "evidence": [
+        "Second of the two Swi objects (scan of copy-table data): fxn 0xC2CC5240, priority 15, mask 0x8000, as SmplTrek's."
+      ]
+    },
+    {
+      "address": "0xc2c7a800",
+      "name": "power_gpio_init",
+      "kind": "function",
+      "prototype": "void power_gpio_init(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "2bcf74e09bc359a956dc7f24bda60cce",
+      "evidence": [
+        "Start of the power-manager block, which is the same code as SmplTrek 3.2.174's 0xC1646AC0-0xC16470B0 (region_diff --at, 431 instructions, only data-page offsets differ, the pin constants (3,0) (4,11) (3,7) included). Stores the GPIO pin numbers of the power key, power hold and power source at B14+212 / +216 / +220 (SmplTrek: +320 / +324 / +328). Not carried (reached only through .init_array)."
+      ]
+    },
+    {
+      "address": "0xc2bce920",
+      "name": "battery_sample",
+      "kind": "function",
+      "prototype": "void battery_sample(unsigned raw)",
+      "confidence": "probable",
+      "prefix_sha256": "b75b447c8e78f5fce2ed52916058ae50",
+      "evidence": [
+        "Called by IOObserver::run at 0xC2CAF894 with the halfword at g_ad_controller_uart+66 (panel analogue channel 15), as in SmplTrek (0xC158C764). Same constants and structure (2000 floor, eight-sample average), scheduled slightly differently: region_diff to SmplTrek 0xC158CA24 shows only encoding and packing differences."
+      ]
+    },
+    {
+      "address": "0xc2bcf148",
+      "name": "battery_level_get",
+      "kind": "function",
+      "prototype": "int battery_level_get(void)",
+      "confidence": "probable",
+      "prefix_sha256": "95a385dbbb764583500aefc1dc55af80",
+      "evidence": [
+        "Target of MainDelegate's PowerManagerDelegate slot 1 (thunk 0xC2BAC448 -> 0xC2BAC440, a plain branch); returns the level word of g_battery_monitor, as SmplTrek 0xC158CED0."
+      ]
+    },
+    {
+      "address": "0xc2bad5e0",
+      "name": "MainDelegate::handle_power_message",
+      "kind": "function",
+      "prototype": "int MainDelegate::handle_power_message(MessageHandler *this, const AppMessage *msg)",
+      "confidence": "probable",
+      "prefix_sha256": "a9fa4534ef5ceb721fb7d94774cf4fde",
+      "evidence": [
+        "MessageHandler slot 1 (message type 0) via the thunk 0xC2BAD850 (this -= 12). Compiled differently from SmplTrek's 0xC154AD14 and with more cleanup calls, but the same shape: subtype 1 -> graphics redraw (0xC2C9B144); subtype 0 -> power-off sequence ending with settings_save (0xC2BAD7B8), a wait until 1000 ticks since the start (addk 1000), graphics_task_stop through 0xC2C9B0A0, and power_hold_release(pm) at 0xC2BAD7F8 with pm = A11 - 28 (A11 = &g_power_manager+28, set to 1 when a modal controller is shown)."
+      ]
+    },
+    {
+      "address": "0xc2c67704",
+      "name": "graphics_request_redraw",
+      "kind": "function",
+      "prototype": "void graphics_request_redraw(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "6734b1ef7f3fbc0f818b56c5147f9ba4",
+      "evidence": [
+        "Whole body: Event_post(g_graphics_event, 3), as SmplTrek 0xC1629A44. Reached through 0xC2C9B144 (PowerManagerDelegate slot 4)."
+      ]
+    },
+    {
+      "address": "0xc2cba700",
+      "name": "MainDelegate::card_state_lambda",
+      "kind": "function",
+      "prototype": "void lambda(unsigned event)",
+      "confidence": "probable",
+      "prefix_sha256": "d701b99c8ff9af8eaa4ce78903f542f4",
+      "evidence": [
+        "Slot 6 (call operator) of the std::function wrapper vtable (address point 0xC2D97C70) for the lambda in _INTERNAL_16_MainDelegate_cpp_observer::handleCardStateEvent(CardMessage::Event) (RTTI). Called through g_card_state_observer by sd_card_poll, as in SmplTrek (0xC1684AE0). Body not compared with SmplTrek's."
+      ]
+    },
+    {
+      "address": "0xc2be044a",
+      "name": "usb_task_dispatch",
+      "kind": "function",
+      "prototype": "void usb_task_dispatch(unsigned code, unsigned arg)",
+      "confidence": "probable",
+      "prefix_sha256": "98980e5e9241e7488eb7c09c5152f993",
+      "evidence": [
+        "Same code as SmplTrek 3.2.174's usb_task_dispatch (0xC158E70A; region_diff over 0xC158E70A-0xC158E8F0 with this start: only moved data addresses). Starts on a half-word, which is why it does not carry."
+      ]
+    },
+    {
+      "address": "0xc2c6c618",
+      "name": "usb_midi_rxbuf_callback",
+      "kind": "function",
+      "prototype": "int usb_midi_rxbuf_callback(USBMIDIDevice *dev, unsigned event, ...)",
+      "confidence": "confirmed",
+      "prefix_sha256": "9719badcf56310d4fa2b9b23d6ce4524",
+      "evidence": [
+        "Callback word of the receive tUSBBuffer (0xC2D991F4 +4), in the USB-MIDI class block that is the same code as SmplTrek's 0xC162D774-0xC162DFDA (region_diff: only moved data addresses); same body as SmplTrek's 0xC162D818 (posts {0, endpoint mask} to the USB task)."
+      ]
+    },
+    {
+      "address": "0xc2c25b80",
+      "name": "file_rename",
+      "kind": "function",
+      "prototype": "FRESULT file_rename(const TCHAR *old, const TCHAR *new)",
+      "confidence": "confirmed",
+      "prefix_sha256": "0e9a52550dbc2b80452dcd02a548455e",
+      "evidence": [
+        "Whole body: B f_rename (0xC2B853A8), NOP 5, between file_unlink and file_get_attr as in SmplTrek (0xC1602A84). Overrides a wrong carry (func_match paired this one-instruction thunk with 0xC2BD2578)."
+      ]
+    },
+    {
+      "address": "0xc2bd3754",
+      "name": "prex_block_116",
+      "kind": "function",
+      "prototype": "void *prex_block_116(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "089ef95e9c046d54d64cba152a8cd8e2",
+      "evidence": [
+        "Whole body: returns g_settings_ext+116 (0xC2B75034). func_match pairs it with SmplTrek's prex_ext_file_settings (+108), but this product has no EXT SRC track, so the block's role is not carried over (not decoded). This product resets PREX to defaults on every boot."
+      ]
+    },
+    {
+      "address": "0xc2bcd160",
+      "name": "setting_88_enabled",
+      "kind": "function",
+      "prototype": "bool setting_88_enabled(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "d4c3f88e493ec7438b679b0961a13c60",
+      "evidence": [
+        "Returns 0xC2BD2B28() != 0, where 0xC2BD2B28 returns g_settings+0x88 (0xC2B74A0C, clamped [0,1] by the validator, unlabelled). func_match paired this function with SmplTrek's setting_tuner_reference_get (a one-word getter); that carry was wrong, and this hand entry replaces it."
+      ]
+    },
+    {
+      "address": "0xc2b7ee18",
+      "name": "g_control_scan",
+      "kind": "data",
+      "type": "ControlScan (Foundation::DynamicScan)",
+      "confidence": "probable",
+      "evidence": [
+        "Built at 0xC2CC72C0-0xC2CC72F0 next to g_control_switch_scanner (0xC2B7D688): vptr 0xC2D9A258 (RTTI ControlScan vtable + 8), +4 = 6 rows, +8 = 8 bits per row, +12 = 0, the same as SmplTrek's g_control_scan. Not carried by carry_symbols (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2da3160",
+      "name": "g_encoder_test_labels",
+      "kind": "data",
+      "type": "char[5]",
+      "confidence": "confirmed",
+      "evidence": [
+        "Constant \"ABCDV\", loaded by the AppTestEncoder encoder handler 0xc2cbf1c0 (RTTI vtable entry; not slot 7 as in SmplTrek). Same labels as SmplTrek's g_encoder_test_labels.",
+        "The handler indexes this table with the encoder index the page receives (Lofi-12 XT: B4; CyDrums: msg+4 of the message pointer in B4); the index chain from GPIO bits to the page is checked end to end (see SmplTrek's entry)."
+      ]
+    },
+    {
+      "address": "0xc2b6a100",
+      "name": "g_pad_delegate",
+      "kind": "data",
+      "type": "KeyPadDelegate *",
+      "confidence": "confirmed",
+      "evidence": [
+        "g_pad_sensor (0xC2B69D00) + 1024: pad_sensor_update loads self[256] first and returns when it is 0 (SmplTrek keeps the word at +124). Writers: MainDelegate's setup stores MainDelegate+40 (stores around 0xC2BAD028 / 0xC2BAD080); a test page stores this+16 and then 0 (0xC2C95198 / 0xC2C951AA), the same pattern as SmplTrek's AppTestMIDI. A single-word hook for every pad event, as in SmplTrek."
+      ]
+    },
+    {
+      "address": "0xc2d827e0",
+      "name": "g_track_table",
+      "kind": "data",
+      "type": "TrackSound::TrackInterface *[10] (inference from the contents)",
+      "confidence": "probable",
+      "evidence": [
+        "Initialised data: eight zero words, then 0xC2B7E10C and 0xC2B7D7A8. The track set-up at 0xC2CC1480-0xC2CC14B0 calls 0xC2C93AE0 on 0xC2B7E10C (stores the TrackSound::USBTrack vptr 0xC2D96180) and 0xC2CAF500 on 0xC2B7D7A8 (stores the TrackSound::ExtTrack vptr 0xC2D96148), after eight calls of 0xC2C80540 on 0xC2B51E40 + 0x1D0 * i (i = 0..7). So the layout matches SmplTrek's g_track_table with 8 sequencer tracks before USB AUDIO and EXT SRC. How Lofi-12 XT's mix code walks it was not read (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c524d8",
+      "name": "AudioEngine::AudioFileControlTask::run",
+      "kind": "function",
+      "prototype": "void AudioFileControlTask::run(AudioFileControlTask *this)",
+      "confidence": "probable",
+      "prefix_sha256": "33b92a9cd58bc0a707808ec50cfb4669",
+      "evidence": [
+        "Read packet by packet 2026-11-10 (not carried: the carried entry pointed here but its command list was SmplTrek's). Loops on mailbox_pend; the message is {cmd, stream, m2, m3, m4} as in SmplTrek, cmd 0 at the start, 1-2 inline, 3-11 through a jump table. The stream object is 608 bytes (inference: the free call in command 7 is a sized delete with 608 in command 7) with its listener at +592; the file-stream part starts at +8 as in SmplTrek.",
+        "Commands: 0 write block (slot 0 write, 3267817132 listener slot 1, event if m2; then card_space_check(0) (same code as SmplTrek) and, below 128 MiB free, always app message {5, 2, -2, 0} (no app-state test, unlike SmplTrek)); 1 / 2 / 3 read as in SmplTrek (3267817176 for 2, event for 3); 4 seek; 5 open: AudioEngine::WavFile::open(fs, m4, (u8)m2), then always Event_post (1 opened, -1 failed): no wait flag and no listener path, unlike SmplTrek; 6 write and close (SmplTrek 7); 7 close and free: AudioEngine::WavFile::close, 0xC2C6E804(stream), 0xC2CEBC00(stream, 608) (SmplTrek 8 has no middle call); 8 write and flush (3267693964; SmplTrek 9); 9 file_exists, 10 file_mkdir, 11 file_unlink (SmplTrek 10-12). SmplTrek's no-op 6 is absent, so commands from 6 up are SmplTrek's minus one.",
+        "Completion values as in SmplTrek: 1 for success or a nonzero file_exists / file_mkdir / file_unlink result, -1 otherwise. Checked by reading this loop and every request function (post_*), not by carrying."
+      ]
+    },
+    {
+      "address": "0xc2c52084",
+      "name": "AudioEngine::AudioFileControlTask::post_close_free",
+      "kind": "function",
+      "prototype": "void post_close_free(AudioFileControlTask *this, void *stream, int wait)",
+      "confidence": "probable",
+      "prefix_sha256": "0723f0b15f0d65fee96dbdd374da1408",
+      "evidence": [
+        "Posts {7, stream, wait, 0, 0}; Event_pend when wait. Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c52108",
+      "name": "AudioEngine::AudioFileControlTask::post_unlink",
+      "kind": "function",
+      "prototype": "int post_unlink(AudioFileControlTask *this, const char *path)",
+      "confidence": "probable",
+      "prefix_sha256": "acb9c7647bb56afeeaac5e2dc7024ae5",
+      "evidence": [
+        "Posts {11, 0, 0, 0, path}; waits; returns 1 when file_unlink returned nonzero. Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c52158",
+      "name": "AudioEngine::AudioFileControlTask::post_exists",
+      "kind": "function",
+      "prototype": "int post_exists(AudioFileControlTask *this, const char *path)",
+      "confidence": "probable",
+      "prefix_sha256": "9ba2fdb6ca67562ca4a51388499bd0a6",
+      "evidence": [
+        "Posts {9, 0, 0, 0, path}; waits; returns 1 when the file exists. Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c521ac",
+      "name": "AudioEngine::AudioFileControlTask::post_write",
+      "kind": "function",
+      "prototype": "void post_write(AudioFileControlTask *this, void *stream, void *buffer, unsigned length, int wait)",
+      "confidence": "probable",
+      "prefix_sha256": "7f3e18b8e3e3aecb97faf8c9224709ad",
+      "evidence": [
+        "Posts {0, stream, wait, length, buffer}; Event_pend when wait. Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c52234",
+      "name": "AudioEngine::AudioFileControlTask::post_mkdir",
+      "kind": "function",
+      "prototype": "int post_mkdir(AudioFileControlTask *this, const char *path)",
+      "confidence": "probable",
+      "prefix_sha256": "c0b365a2ef205ea85b3007111aed62f2",
+      "evidence": [
+        "Posts {10, 0, 0, 0, path}; waits; returns 1 when file_mkdir returned nonzero. Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c52288",
+      "name": "AudioEngine::AudioFileControlTask::post_flush",
+      "kind": "function",
+      "prototype": "void post_flush(AudioFileControlTask *this, void *stream, void *buffer, unsigned length, int wait)",
+      "confidence": "probable",
+      "prefix_sha256": "dae632b3798e9ac33ca21fc1d899aede",
+      "evidence": [
+        "Posts {8, stream, wait, length, buffer}; Event_pend when wait. Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c5230c",
+      "name": "AudioEngine::AudioFileControlTask::post_write_close",
+      "kind": "function",
+      "prototype": "void post_write_close(AudioFileControlTask *this, void *stream, void *buffer, unsigned length, int wait)",
+      "confidence": "probable",
+      "prefix_sha256": "4ccf3704b511785432e9614b4154e36d",
+      "evidence": [
+        "Posts {6, stream, length, wait, buffer}; Event_pend when wait. Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c52394",
+      "name": "AudioEngine::AudioFileControlTask::post_seek",
+      "kind": "function",
+      "prototype": "void post_seek(AudioFileControlTask *this, void *stream, unsigned position)",
+      "confidence": "probable",
+      "prefix_sha256": "08b59f339ec68a998af7ea8ad50f6bdc",
+      "evidence": [
+        "Posts {4, stream, position, 0, 0}; never waits. Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c523cc",
+      "name": "AudioEngine::AudioFileControlTask::post_read",
+      "kind": "function",
+      "prototype": "void post_read(AudioFileControlTask *this, void *stream, unsigned position, unsigned length, void *buffer, int mode)",
+      "confidence": "probable",
+      "prefix_sha256": "8185975eb94ca6e10e6246974f22b904",
+      "evidence": [
+        "Posts {cmd, stream, position, length, buffer}: cmd 3 and Event_pend for mode 1, 2 for mode 2, else 1 (same code as SmplTrek's). Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c52484",
+      "name": "AudioEngine::AudioFileControlTask::post_open",
+      "kind": "function",
+      "prototype": "int post_open(AudioFileControlTask *this, void *stream, const char *path, int mode)",
+      "confidence": "probable",
+      "prefix_sha256": "acffa1a6f01b47904e3d2fb8806fb572",
+      "evidence": [
+        "Posts {5, stream, mode, 0, path}; always waits and returns 0 (opened) or -1. SmplTrek's takes a wait flag and can return through the listener instead. Command number read from the message stores (execute-packet evaluator, checked by hand) and matched to the run loop's case (2026-11-10)."
+      ]
+    },
+    {
+      "address": "0xc2c6eed8",
+      "name": "afc_stream_notify_read",
+      "kind": "function",
+      "prototype": "void afc_stream_notify_read(void *stream, void *buffer, unsigned length)",
+      "confidence": "probable",
+      "prefix_sha256": "5caf9f3ef9bfac2b563cc2140565643f",
+      "evidence": [
+        "Listener at stream+592 vtable slot 0 (listener, stream, buffer, length) if set; called by AudioFileControlTask command 2. Same shape as SmplTrek's, other listener offset."
+      ]
+    },
+    {
+      "address": "0xc2c6eeac",
+      "name": "afc_stream_notify_written",
+      "kind": "function",
+      "prototype": "void afc_stream_notify_written(void *stream, void *buffer, unsigned length)",
+      "confidence": "probable",
+      "prefix_sha256": "ce558d41eed6a884116ea62717389dbf",
+      "evidence": [
+        "Listener at stream+592 vtable slot 1 if set; called by AudioFileControlTask command 0. Same shape as SmplTrek's, other listener offset."
+      ]
+    },
+    {
+      "address": "0xc2c50d8c",
+      "name": "AudioEngine::WavFile::flush",
+      "kind": "function",
+      "prototype": "void AudioEngine::WavFile::flush(WavFile *this)",
+      "confidence": "probable",
+      "prefix_sha256": "a6c1ca08948dcccbfad2dab191e0c3d4",
+      "evidence": [
+        "Called by AudioFileControlTask command 8 after the last write. Calls AudioEngine::WavFile::tell, two helpers, file_sync and AudioEngine::WavFile::seek (restores the position; SmplTrek's flush has no tell / seek)."
+      ]
+    },
+    {
+      "address": "0xc2c3d3c0",
+      "name": "AudioEngine::ExpandedWavFile::ExpandedWavFile",
+      "kind": "function",
+      "prototype": "ExpandedWavFile *ExpandedWavFile::ExpandedWavFile(ExpandedWavFile *this, ...)",
+      "confidence": "confirmed",
+      "prefix_sha256": "ffc64ae41554b0e9e0a93e1871623d1a",
+      "evidence": [
+        "Calls AudioEngine::WavFile::WavFile (0xC2C50B84) and stores the AudioEngine::ExpandedWavFile vptr 0xC2D9C778 (RTTI). Not carried; called by afc_stream_init at stream+8."
+      ]
+    },
+    {
+      "address": "0xc2c6e82c",
+      "name": "afc_stream_init",
+      "kind": "function",
+      "prototype": "void *afc_stream_init(void *stream, int b4, int a6, int b6)",
+      "confidence": "probable",
+      "prefix_sha256": "79d71179784af5f469da934a96bbd607",
+      "evidence": [
+        "Clears 8 bytes at stream, AudioEngine::ExpandedWavFile::ExpandedWavFile(stream+8, b4, a6, b6), listener (+592) = 0, then more fields up to the 608-byte object's end (not read). Same role as SmplTrek's 0xC1606F08; not carried."
+      ]
+    },
+    {
+      "address": "0xc2babba8",
+      "name": "app_post_message",
+      "kind": "function",
+      "prototype": "int app_post_message(const void *msg, int timeout)",
+      "confidence": "probable",
+      "prefix_sha256": "71f7dcdc51eefe6401a08fded9c3abb8",
+      "evidence": [
+        "Checked 2026-11-10 (the carry had body similarity 0.083): B to 0xC2CB99C4, which tail-calls mailbox_post (0xC2CDDFD0) with A4 = g_app_mailbox 0xC2B74CAC, msg in B4, timeout in A6, as SmplTrek's 0xC1549C30 -> 0xC167E9C4."
+      ]
+    },
+    {
+      "address": "0xc2c3d4a4",
+      "name": "AudioEngine::ExpandedWavFile::set_tempo",
+      "kind": "function",
+      "prototype": "void AudioEngine::ExpandedWavFile::set_tempo(ExpandedWavFile *this, int tempo_x10)",
+      "confidence": "probable",
+      "prefix_sha256": "7fb13559a2259e1f12fb6f1f237a142f",
+      "evidence": [
+        "Read 2026-11-11 in this image. BNOP B3,4 with STW B4 -> this+48 in the delay slot (0xC2C3D4A8 is the getter); the constructor zeroes +48. write_tempo_label prints +48. One direct caller (0xC2BBF8EE) passes the getter's value of another ExpandedWavFile (copying the tempo from one file object to another); no call with the project tempo was found."
+      ]
+    },
+    {
+      "address": "0xc2c3d4ac",
+      "name": "AudioEngine::ExpandedWavFile::write_smpl_chunk",
+      "kind": "function",
+      "prototype": "FRESULT AudioEngine::ExpandedWavFile::write_smpl_chunk(ExpandedWavFile *this, FSIZE_t pos)",
+      "confidence": "probable",
+      "prefix_sha256": "1c8aec95f177ce4ee913a63440f9d3b6",
+      "evidence": [
+        "Same shape as SmplTrek's 0xC163A5E8: builds a \"smpl\" (0xC2DA3178) chunk with one loop from this+40 / this+44 and writes it at pos. No call or stored pointer to this address found in this image (packets --calls, word scan)."
+      ]
+    },
+    {
+      "address": "0xc2c3d58c",
+      "name": "AudioEngine::ExpandedWavFile::write_orsl_chunk",
+      "kind": "function",
+      "prototype": "FRESULT AudioEngine::ExpandedWavFile::write_orsl_chunk(ExpandedWavFile *this)",
+      "confidence": "probable",
+      "prefix_sha256": "6c8692bd068578a900e2fd7221be4bcd",
+      "evidence": [
+        "Read 2026-11-11 in this image. Writes an \"ORSL\" (0xC2DA3168) chunk at file_size: size 4 + count*32, a count word (this+564), then count 32-byte records from this+52; sets the byte this+576 to 1. What the records hold is not read. SmplTrek 3.2.174 has no ORSL chunk (the id string is absent from its image). Called by write_extra_chunks.",
+        "Meaning (inference, 2026-11-11): ORSL is the sample's slice list. audio_file_save_slices (0xC2C76728) writes it from the CHOP/SLICE save path, and the record limit is 15 in Lofi-12 XT 1.1.156 and 16 here, matching the 1.5 release note 'Expand up to 16 slices'. The record fields are not read."
+      ]
+    },
+    {
+      "address": "0xc2c3d650",
+      "name": "AudioEngine::ExpandedWavFile::write_cue_chunk",
+      "kind": "function",
+      "prototype": "FRESULT AudioEngine::ExpandedWavFile::write_cue_chunk(ExpandedWavFile *this)",
+      "confidence": "probable",
+      "prefix_sha256": "f08fe58849e427ff986305d47acabc2c",
+      "evidence": [
+        "Read 2026-11-11 in this image: \"cue \" (0xC2DA3198) chunk with one cue point, chunk id \"data\" (0xC2DA3190), appended at file_size; same shape as SmplTrek's 0xC163A6C8. Called by write_extra_chunks."
+      ]
+    },
+    {
+      "address": "0xc2c3d6f0",
+      "name": "AudioEngine::ExpandedWavFile::write_tempo_label",
+      "kind": "function",
+      "prototype": "FRESULT AudioEngine::ExpandedWavFile::write_tempo_label(ExpandedWavFile *this)",
+      "confidence": "probable",
+      "prefix_sha256": "f424e5864e90b92cf61128e02477d788",
+      "evidence": [
+        "Read 2026-11-11 in this image (the carry had body similarity 0.359): fills the template \"Tempo: 120.0\" (0xC2D9E848) with this+48 in decimal (multiply-high constants for /10, /100, /1000) and appends a LIST (0xC2DA31B0) / adtl (0xC2DA3188) / labl (0xC2DA3180) chunk, as SmplTrek's 0xC163A760. Called by write_extra_chunks."
+      ]
+    },
+    {
+      "address": "0xc2c3d88c",
+      "name": "AudioEngine::ExpandedWavFile::write_aftg_chunk",
+      "kind": "function",
+      "prototype": "FRESULT AudioEngine::ExpandedWavFile::write_aftg_chunk(ExpandedWavFile *this)",
+      "confidence": "probable",
+      "prefix_sha256": "f7ba4e43f59196d3f33c0e8432223243",
+      "evidence": [
+        "Read 2026-11-11 in this image. Writes an \"AFTG\" (0xC2DA31A0) chunk of size 8 at file_size: the 8 bytes at this+568. Meaning not read. SmplTrek 3.2.174 has no AFTG chunk. Called by write_extra_chunks.",
+        "Meaning (probable, 2026-11-11): the sample's tags. audio_files_save_tags (0xC2BBF5B4, called after \"SAVING TAGS\") rewrites changed files with a new 8-byte value through set_aftg. The bit assignment is not read."
+      ]
+    },
+    {
+      "address": "0xc2c3d92c",
+      "name": "AudioEngine::ExpandedWavFile::write_extra_chunks",
+      "kind": "function",
+      "prototype": "void AudioEngine::ExpandedWavFile::write_extra_chunks(ExpandedWavFile *this)",
+      "confidence": "probable",
+      "prefix_sha256": "2dd0abed3a4f82650bc2b0c6c193de8a",
+      "evidence": [
+        "Read 2026-11-11 in this image: ExpandedWavFile vtable slot 2 (vptr 0xC2D9C778 + 8). Calls write_cue_chunk (0xC2C3D650), write_tempo_label (0xC2C3D6F0), write_orsl_chunk (0xC2C3D58C), write_aftg_chunk (0xC2C3D88C) in that order. SmplTrek's slot 2 writes only cue and LIST."
+      ]
+    },
+    {
+      "address": "0xc2c3d964",
+      "name": "AudioEngine::ExpandedWavFile::set_orsl_records",
+      "kind": "function",
+      "prototype": "void AudioEngine::ExpandedWavFile::set_orsl_records(ExpandedWavFile *this, const void *records, int count)",
+      "confidence": "probable",
+      "prefix_sha256": "798ff6745f753063de6fde9a36967b69",
+      "evidence": [
+        "Read 2026-11-11 in this image. Stores count at this+564, copies count 32-byte records to this+52 (SPLOOP), then fills the remaining records up to 16 with defaults (words -1, 100 and zeros). Callers: 0xC2BBF900 and 0xC2C7681A (with set_aftg next to each)."
+      ]
+    },
+    {
+      "address": "0xc2c3da6c",
+      "name": "AudioEngine::ExpandedWavFile::set_aftg",
+      "kind": "function",
+      "prototype": "void AudioEngine::ExpandedWavFile::set_aftg(ExpandedWavFile *this, const uint64_t *value)",
+      "confidence": "probable",
+      "prefix_sha256": "9dd86b2e51791564e80bc6a11cf897af",
+      "evidence": [
+        "Read 2026-11-11 in this image. If the pointer is non-null, copies 8 bytes from it to this+568 (the AFTG chunk's data)."
+      ]
+    },
+    {
+      "address": "0xc2c3da80",
+      "name": "AudioEngine::ExpandedWavFile::read_extra_chunk",
+      "kind": "function",
+      "prototype": "int AudioEngine::ExpandedWavFile::read_extra_chunk(ExpandedWavFile *this, const void *chunk_header)",
+      "confidence": "probable",
+      "prefix_sha256": "652e94fc712b1848a7529ec97424dd98",
+      "evidence": [
+        "ExpandedWavFile vtable slot 3 (vptr 0xC2D9C778 + 12), called by AudioEngine::WavFile::read_chunks for chunks other than fmt / data. Compares the id with \"ORSL\", \"AFTG\", \"smpl\", \"cue \", \"LIST\" (string table 0xC2D98AC0) and uses \"data\", \"labl\" and \"Tempo: \"; only the id tests were read in this image (SmplTrek's slot 3, read further, parses \"Tempo: NNN.N\" back into +48)."
+      ]
+    },
+    {
+      "address": "0xc2c23078",
+      "name": "project_set_tempo_x10",
+      "kind": "function",
+      "prototype": "void project_set_tempo_x10(int tempo_x10)",
+      "confidence": "probable",
+      "prefix_sha256": "bfaa34a41ff96e5e606e44b201f746b7",
+      "evidence": [
+        "Checked 2026-11-11 in this image: BNOP B3,2 with MVK/MVKH 0xC2B72094 and STW A4 in the delay slots; 0xC2C2308C is the getter. The initialiser at 0xC2C22BE8 stores 1200 at 0xC2B72090+4 = 0xC2B72094 (as SmplTrek's 0xC1611438 stores 1200 at 0xC1500CF4). Tempo x 10 is inferred as in SmplTrek."
+      ]
+    },
+    {
+      "address": "0xc2c2308c",
+      "name": "project_get_tempo_x10",
+      "kind": "function",
+      "prototype": "int project_get_tempo_x10(void)",
+      "confidence": "probable",
+      "prefix_sha256": "3252c314277fd9f8df5e4bf51a899631",
+      "evidence": [
+        "Read 2026-11-11 in this image: returns the word at 0xC2B72094 (see project_set_tempo_x10). Not carried by func_match. Unlike SmplTrek, no call passing it to AudioEngine::ExpandedWavFile::set_tempo was found here."
+      ]
+    },
+    {
+      "address": "0xc2bbf5b4",
+      "name": "audio_files_save_tags",
+      "kind": "function",
+      "prototype": "void audio_files_save_tags(void *list, void *ctx)",
+      "confidence": "probable",
+      "prefix_sha256": "9889ac8c1eef0425fbb7bd97432e26ed",
+      "evidence": [
+        "Read 2026-11-11. Its only caller (0xC2BC0160) loads \"SAVING TAGS\" (0xC2D8D25A, MVK/MVKH at 0xC2BC0144) just before the call. Walks a list of files (count at arg+44; ids at 0xC2932FC0, 8-byte values at 0xC2726160), skips files whose stored value equals the new one, and for each changed file: opens it as an AudioEngine::ExpandedWavFile (path buffer 0xC2B7A630), builds a second path (0xC2B7A530, with \"/\" 0xC2D8D258), copies +40 / +44 / tempo / ORSL records into a new ExpandedWavFile, calls set_aftg with the new 8-byte value, opens the new file for create, copies the audio data block by block (WavFile::read, 0xC2C35C50, WavFile::write), closes both and calls 0xC2BB84D4 with the two paths (inference: replace the old file). So the AFTG chunk holds a sample's tags (the manual: 15 tags plus Favorite, 'Tag information is stored in the audio file')."
+      ]
+    },
+    {
+      "address": "0xc2c76728",
+      "name": "audio_file_save_slices",
+      "kind": "function",
+      "prototype": "int audio_file_save_slices(int file, const void *records, int count, void *ctx)",
+      "confidence": "probable",
+      "prefix_sha256": "9c3a2fc91730a4dd5a24d60ce7503243",
+      "evidence": [
+        "Read 2026-11-11. Opens the file (path from 0xC2C23B80) as an AudioEngine::ExpandedWavFile and keeps its AFTG value (8 bytes at +568; 0 when the open fails), then builds a new ExpandedWavFile with set_orsl_records(records, count) from the arguments and set_aftg(kept value), opens it for create and copies the audio through WavFile::write. Caller 0xC2BBDAE0 passes a {count, records...} block (B4 = block+4, A6 = *block), the ORSL chunk's own layout. Matches the manual's 'Saving slice data' (func + OK on the CHOP/SLICE page: 'The saved slice information is written directly to the audio file'); the slice reading of ORSL is an inference from that and from the record limit (15 in 1.1.156, 16 in 1.5.205, where the release notes say 'Expand up to 16 slices')."
+      ]
+    },
+    {
+      "address": "0xc2cd87c0",
+      "name": "__c6xabi_llshl",
+      "kind": "function",
+      "prototype": "uint64_t __c6xabi_llshl(uint64_t value, unsigned shift)",
+      "confidence": "probable",
+      "prefix_sha256": "a1a64e3bd2fcc355fdc26ae860913efd",
+      "evidence": [
+        "Read 2026-11-11: value in A5:A4, count in B4; returns 0 for counts >= 64 and otherwise combines SHL of both halves with SHRU of the low half by 32 - n, the shape of the TI run-time 64-bit shift left. Name from the TI C6000 EABI run-time naming (inference; not matched against the library)."
+      ]
+    },
+    {
+      "address": "0xc2bc03e8",
+      "name": "AppSampleTagSearch::handle_message_1",
+      "kind": "function",
+      "prototype": "void AppSampleTagSearch::handle_message_1(AppSampleTagSearch *this, const int *msg)",
+      "confidence": "probable",
+      "prefix_sha256": "90d1a237d0f0a05c0a9153385680c447",
+      "evidence": [
+        "Read 2026-11-11. Slot 11 of the AppSampleTagSearch vtable (RTTI vtable 0xC2D8E078, entry at 0xC2D8E0AC); MainDelegate routes app message type 1 to the current controller's slot 11 (SmplTrek MainDelegate::handle_message, read there). Acts only when msg+4 == 1; then with the page's +28 flag set (tag edit mode, inference) it calls AppSampleTagSearch::toggle_file_tag(this, msg+8), else AppSampleTagSearch::toggle_filter_tag(this, msg+8). The message comes from AppSampleTagSearch::on_pad (the only type-1 poster found), so msg+4 is the pad event kind (1 = pressed, as in SmplTrek) and msg+8 the raw pad index: tag bit n = pad n. With pad_to_track's table (even pads = TRK1-8), BD..KB would be bits 0, 2, ... 14 and SY..Slice the odd bits 1..13, if the manual's tag list follows the pad labels and the odd pads run CFG, SND, FLT, MOD, AMP, EFX, RVB in order (inference; not checked on hardware)."
+      ]
+    },
+    {
+      "address": "0xc2bbf2a0",
+      "name": "AppSampleTagSearch::toggle_file_tag",
+      "kind": "function",
+      "prototype": "void AppSampleTagSearch::toggle_file_tag(AppSampleTagSearch *this, unsigned bit)",
+      "confidence": "probable",
+      "prefix_sha256": "16a7d8c7951794423139d2e9a33c56d3",
+      "evidence": [
+        "Read 2026-11-11: g_audio_file_tags[*(0xC2B75624)] ^= __c6xabi_llshl(1, bit), i.e. toggles one bit of the selected file's 64-bit tag word (0xC2B75624 holds the selected entry's index). audio_files_save_tags later writes changed words into the files' AFTG chunks."
+      ]
+    },
+    {
+      "address": "0xc2bc0304",
+      "name": "AppSampleTagSearch::toggle_filter_tag",
+      "kind": "function",
+      "prototype": "void AppSampleTagSearch::toggle_filter_tag(AppSampleTagSearch *this, unsigned bit)",
+      "confidence": "probable",
+      "prefix_sha256": "dae23547f29ab7314a714a552a641080",
+      "evidence": [
+        "Read 2026-11-11. Two 64-bit masks in the page: +48 (tags required) and +56 (tags excluded). If bit 16 of g_control_switch_state is clear it toggles the bit in +48 and clears it in +56, else toggles it in +56 and clears it in +48, then refreshes the result list (0xC2BBED44). This matches the manual's TAG SEARCH: a pad turns a tag on, and a pad pressed while holding the page-left switch excludes it ('Minus'). Bit 16 is 'octave left' on SmplTrek's test-page panel map; that it is Lofi-12 XT's page-left switch is an inference from the manual."
+      ]
+    },
+    {
+      "address": "0xc2726160",
+      "name": "g_audio_file_tags",
+      "kind": "data",
+      "type": "uint64_t[]",
+      "confidence": "probable",
+      "evidence": [
+        "8 bytes per audio-file database entry. Toggled bit by bit by AppSampleTagSearch::toggle_file_tag. audio_files_save_tags compares each entry with the 64-bit value 0xC2B981A8 returns for that file (inference: the tags currently recorded for it) and rewrites the files that differ, with the new word as the AFTG chunk. Size not determined."
+      ]
+    },
+    {
+      "address": "0xc2bcd784",
+      "name": "pad_to_track",
+      "kind": "function",
+      "prototype": "int pad_to_track(int pad)",
+      "confidence": "probable",
+      "prefix_sha256": "82f80a7975621566a087621d75afebf4",
+      "evidence": [
+        "Read 2026-11-11 in this image (not carried): returns the word at 0xC2D95A00 + 4*pad. That table starts 0, -1, 1, -1, 2, -1, ... 7, so even pads 0-14 are tracks 0-7 and odd pads are not tracks (SmplTrek's g_pad_track_map is a different permutation of 15 tracks). TrackColor's pad slot passes the pad index here (0xC2C3AA80)."
+      ]
+    },
+    {
+      "address": "0xc2bbef58",
+      "name": "AppSampleTagSearch::on_pad",
+      "kind": "function",
+      "prototype": "void AppSampleTagSearch::on_pad(AppSampleTagSearch *this, const int *event)",
+      "confidence": "probable",
+      "prefix_sha256": "46666cccc9f2d6918e94f71623bf1eaf",
+      "evidence": [
+        "Read 2026-11-11. AppSampleTagSearch vtable slot 7, the pad slot in this product's controller vtable (TrackColor's slot 7, 0xC2C3AA58, acts on kind == 1 and passes event+4 to pad_to_track, as SmplTrek's pad pages do in their slot 8; Lofi-12 XT's slot order differs: AppTestEncoder's encoder handler is slot 6 here, 7 in SmplTrek). Copies the 12-byte pad event {kind, pad, velocity} and posts it as app message {1, kind, pad, velocity} (app_post_message, timeout -1); MainDelegate delivers type 1 to slot 11 (AppSampleTagSearch::handle_message_1). The only type-1 poster found among the 54 app_post_message sites (message type resolved per site from the store to msg+0)."
+      ]
+    },
+    {
+      "address": "0xc2c45b00",
+      "name": "__isnanf",
+      "kind": "function",
+      "prototype": "int __isnanf(float x)",
+      "confidence": "probable",
+      "prefix_sha256": "cc4d8ddba77c54bf622fd19ec0a824e0",
+      "evidence": [
+        "Unique 36-byte relocation-masked match (0 bytes masked) to __c6xabi_isnanf in TI CGT 8.3.13 rts6740_elf.lib isnanf.c.obj .text:__c6xabi_isnanf, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2cc8460",
+      "name": "__TI_decompress_rle_core",
+      "kind": "function",
+      "prototype": "void __TI_decompress_rle_core(const uint8_t *inbuf, uint8_t *outbuf, int rle24)",
+      "confidence": "confirmed",
+      "prefix_sha256": "50ffee2279192c989ead0b18bb992113",
+      "evidence": [
+        "Unique 256-byte relocation-masked match (8 bytes masked) to __TI_decompress_rle_core in TI CGT 8.3.13 rts6740_elf.lib copy_decompress_rle.c.obj .text:__TI_decompress_rle_core, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc8760",
+      "name": "copy_in",
+      "kind": "function",
+      "prototype": "void copy_in(COPY_TABLE *tp)",
+      "confidence": "confirmed",
+      "prefix_sha256": "802bc85c416997706fef3b34f6d5719b",
+      "evidence": [
+        "Unique 244-byte relocation-masked match (20 bytes masked) to copy_in in TI CGT 8.3.13 rts6740_elf.lib cpy_tbl.c.obj .text:copy_in, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2ccb7a0",
+      "name": "__c6xabi_get_tp",
+      "kind": "function",
+      "prototype": "void *__c6xabi_get_tp(void)",
+      "confidence": "probable",
+      "prefix_sha256": "03a48262549dde30718b6720d722a50b",
+      "evidence": [
+        "Unique 32-byte relocation-masked match (8 bytes masked) to __c6xabi_get_tp in TI CGT 8.3.13 rts6740_elf.lib tls_get_tp.asm.obj .text:tls:get_tp, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2cd18c0",
+      "name": "__c6xabi_fltulld",
+      "kind": "function",
+      "prototype": "double __c6xabi_fltulld(unsigned long long x)",
+      "confidence": "confirmed",
+      "prefix_sha256": "c61bb15c8257057787fdbb21f9fddab4",
+      "evidence": [
+        "Unique 148-byte relocation-masked match (4 bytes masked) to __c6xabi_fltulld in TI CGT 8.3.13 rts6740_elf.lib fltulld.c.obj .text:__c6xabi_fltulld, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cd1960",
+      "name": "__c6xabi_fltullf",
+      "kind": "function",
+      "prototype": "float __c6xabi_fltullf(unsigned long long x)",
+      "confidence": "confirmed",
+      "prefix_sha256": "5655f3821b0d1ca4e39dbd279cd027e4",
+      "evidence": [
+        "Unique 144-byte relocation-masked match (4 bytes masked) to __c6xabi_fltullf in TI CGT 8.3.13 rts6740_elf.lib fltullf.c.obj .text:__c6xabi_fltullf, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cd1b40",
+      "name": "fmaxf",
+      "kind": "function",
+      "prototype": "float fmaxf(float x, float y)",
+      "confidence": "confirmed",
+      "prefix_sha256": "b8294edcab1f3e7f88aedef4e994d9d1",
+      "evidence": [
+        "Unique 144-byte relocation-masked match (0 bytes masked) to fmaxf in TI CGT 8.3.13 rts6740_elf.lib ti_fmax.c.obj .text:fmaxf, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cd89c0",
+      "name": "logbf",
+      "kind": "function",
+      "prototype": "float logbf(float x)",
+      "confidence": "confirmed",
+      "prefix_sha256": "3ad237a0a612efbd5c175e1267ad8a66",
+      "evidence": [
+        "Unique 128-byte relocation-masked match (4 bytes masked) to logbf in TI CGT 8.3.13 rts6740_elf.lib s_logbf.c.obj .text:logbf, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cdd420",
+      "name": "log10f",
+      "kind": "function",
+      "prototype": "float log10f(float x)",
+      "confidence": "confirmed",
+      "prefix_sha256": "72fef2956e5ad6791776b9972707a1f7",
+      "evidence": [
+        "Unique 72-byte relocation-masked match (4 bytes masked) to log10f in TI CGT 8.3.13 rts6740_elf.lib log10f.c.obj .text:log10f, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2ce1280",
+      "name": "_args_main",
+      "kind": "function",
+      "prototype": "int _args_main(void)",
+      "confidence": "probable",
+      "prefix_sha256": "41a32707dcb8ea667552c7ce88592999",
+      "evidence": [
+        "Unique 48-byte relocation-masked match (16 bytes masked) to _args_main in TI CGT 8.3.13 rts6740_elf.lib args_main.c.obj .text:_args_main, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2cebc80",
+      "name": "__isinff",
+      "kind": "function",
+      "prototype": "int __isinff(float x)",
+      "confidence": "probable",
+      "prefix_sha256": "4d13529549fe92c871dba20c0e24be70",
+      "evidence": [
+        "Unique 32-byte relocation-masked match (0 bytes masked) to __c6xabi_isinff in TI CGT 8.3.13 rts6740_elf.lib isinff.c.obj .text:__c6xabi_isinff, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2cebde0",
+      "name": "abort",
+      "kind": "function",
+      "prototype": "void abort(void)",
+      "confidence": "probable",
+      "prefix_sha256": "d54b074c9524775ab8d3caa0e8ab698c",
+      "evidence": [
+        "Unique 32-byte relocation-masked match (0 bytes masked) to C$$EXIT in TI CGT 8.3.13 rts6740_elf.lib exit.c.obj .text:abort, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match). TI runtime library code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2c73d80",
+      "name": "Exception_handler",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_family_c64p_Exception_handler__I(xdc_Bool abortFlag)",
+      "confidence": "confirmed",
+      "prefix_sha256": "f048889f96b2a98c9328ecbcbaf43413",
+      "evidence": [
+        "Unique 1920-byte relocation-masked match to ti_sysbios_family_c64p_Exception_handler__I in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cae8a0",
+      "name": "Cache_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_family_c64p_Cache_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "f1d26696408bc9426b5f44edf587d3d2",
+      "evidence": [
+        "Unique 628-byte relocation-masked match to ti_sysbios_family_c64p_Cache_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cb8e60",
+      "name": "Hwi_dispatchAlways",
+      "kind": "function",
+      "confidence": "confirmed",
+      "prefix_sha256": "ccfa69356fec323e35e09804fc24e40a",
+      "evidence": [
+        "Unique 512-byte relocation-masked match to ti_sysbios_family_c64p_Hwi_dispatchAlways in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc0760",
+      "name": "Swi_runLoop",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_knl_Swi_runLoop__I(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "79a5655e14f753e342132bd5b8174b5d",
+      "evidence": [
+        "Unique 408-byte relocation-masked match to ti_sysbios_knl_Swi_runLoop__I in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc2180",
+      "name": "_auto_init_elf",
+      "kind": "function",
+      "confidence": "confirmed",
+      "prefix_sha256": "0fa2327397e626c901ee8ddb4a1723d6",
+      "evidence": [
+        "Unique 384-byte relocation-masked match to _auto_init_elf in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc2600",
+      "name": "Exception_dispatch",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_family_c64p_Exception_dispatch__E(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "6265ca485685029b5a5b0fd60129006c",
+      "evidence": [
+        "Unique 384-byte relocation-masked match to ti_sysbios_family_c64p_Exception_dispatch__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc4e80",
+      "name": "Cache_getL1PInitSize",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_family_c64p_Cache_getL1PInitSize__I(ti_sysbios_family_c64p_Cache_Size *size)",
+      "confidence": "confirmed",
+      "prefix_sha256": "38c7943a77ff76b1a68115afb1cc3a8c",
+      "evidence": [
+        "Unique 320-byte relocation-masked match to ti_sysbios_family_c64p_Cache_getL1PInitSize__I in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc4fc0",
+      "name": "Hwi_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_family_c64p_Hwi_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "c97569374e7003c60cb31fed9ee3c2cf",
+      "evidence": [
+        "Unique 320-byte relocation-masked match to ti_sysbios_family_c64p_Hwi_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc5600",
+      "name": "LoggerBuf_setFilterLevel",
+      "kind": "function",
+      "prototype": "xdc_Void xdc_runtime_LoggerBuf_setFilterLevel__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Diags_Mask mask, xdc_runtime_Diags_EventLevel filterLevel)",
+      "confidence": "confirmed",
+      "prefix_sha256": "69698411a9ee9964f679d8c886d347c9",
+      "evidence": [
+        "Unique 320-byte relocation-masked match to xdc_runtime_LoggerBuf_setFilterLevel__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc5740",
+      "name": "Text_putLab",
+      "kind": "function",
+      "prototype": "xdc_Int xdc_runtime_Text_putLab__E(xdc_runtime_Types_Label *lab, xdc_Char **bufp, xdc_Int len)",
+      "confidence": "confirmed",
+      "prefix_sha256": "b8e3ae150f1f965ef321c38403764115",
+      "evidence": [
+        "Unique 320-byte relocation-masked match to xdc_runtime_Text_putLab__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc7140",
+      "name": "LoggerBuf_getFilterLevel",
+      "kind": "function",
+      "prototype": "xdc_runtime_Diags_Mask xdc_runtime_LoggerBuf_getFilterLevel__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Diags_EventLevel level)",
+      "confidence": "confirmed",
+      "prefix_sha256": "bb8653487a4ac8a2e2a4284d78e16e06",
+      "evidence": [
+        "Unique 288-byte relocation-masked match to xdc_runtime_LoggerBuf_getFilterLevel__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cc8960",
+      "name": "Mailbox_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_knl_Mailbox_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "ddf5cc7df091df7f6c83f9382205d1fb",
+      "evidence": [
+        "Unique 256-byte relocation-masked match to ti_sysbios_knl_Mailbox_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2ccd440",
+      "name": "Hwi_dispatchCore",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_family_c64p_Hwi_dispatchCore__I(xdc_Int intNum)",
+      "confidence": "confirmed",
+      "prefix_sha256": "5a878ad9166690dfac46542f5d4adc7b",
+      "evidence": [
+        "Unique 192-byte relocation-masked match to ti_sysbios_family_c64p_Hwi_dispatchCore__I in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2ccd800",
+      "name": "Task_exit",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_knl_Task_exit__E(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "ec28b3eb4e5792fee9719552370004d0",
+      "evidence": [
+        "Unique 192-byte relocation-masked match to ti_sysbios_knl_Task_exit__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cd2400",
+      "name": "Text_printVisFxn",
+      "kind": "function",
+      "prototype": "xdc_Bool xdc_runtime_Text_printVisFxn__I(xdc_Ptr p, xdc_CString s)",
+      "confidence": "confirmed",
+      "prefix_sha256": "e9f06682669fb8bcdb21ad89bd17d9dd",
+      "evidence": [
+        "Unique 156-byte relocation-masked match to xdc_runtime_Text_printVisFxn__I in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cd8e40",
+      "name": "hal_Hwi_initStack",
+      "kind": "function",
+      "confidence": "confirmed",
+      "prefix_sha256": "f1e8abd1cc14342bb34e87736f230d9b",
+      "evidence": [
+        "Unique 128-byte relocation-masked match to ti_sysbios_hal_Hwi_initStack in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cd8f40",
+      "name": "HeapMem_init",
+      "kind": "function",
+      "prototype": "xdc_Void ti_sysbios_heaps_HeapMem_init__I(void)",
+      "confidence": "confirmed",
+      "prefix_sha256": "ab46bbf586a70e3f20331b437a2e9e1c",
+      "evidence": [
+        "Unique 128-byte relocation-masked match to ti_sysbios_heaps_HeapMem_init__I in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cd93c0",
+      "name": "LoggerBuf_Instance_init",
+      "kind": "function",
+      "prototype": "xdc_Int xdc_runtime_LoggerBuf_Instance_init__E(xdc_runtime_LoggerBuf_Object *obj, const xdc_runtime_LoggerBuf_Params *prms, xdc_runtime_Error_Block *eb)",
+      "confidence": "confirmed",
+      "prefix_sha256": "7f86c463ec50336e5f9373e0be90b297",
+      "evidence": [
+        "Unique 128-byte relocation-masked match to xdc_runtime_LoggerBuf_Instance_init__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cd9440",
+      "name": "LoggerBuf_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int xdc_runtime_LoggerBuf_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "a4bb0b067a64f9c1a2419f9d4c7a31bc",
+      "evidence": [
+        "Unique 116-byte relocation-masked match to xdc_runtime_LoggerBuf_Module_startup__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cd94c0",
+      "name": "LoggerBuf_filterOutEvent",
+      "kind": "function",
+      "prototype": "xdc_Bool xdc_runtime_LoggerBuf_filterOutEvent__I(xdc_runtime_Diags_Mask mask)",
+      "confidence": "confirmed",
+      "prefix_sha256": "d517574d0c2a285f9eef8fbf2e98edfd",
+      "evidence": [
+        "Unique 120-byte relocation-masked match to xdc_runtime_LoggerBuf_filterOutEvent__I in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cdd8a0",
+      "name": "Clock_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_knl_Clock_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "adbf2521bdd0827ef339c3244cf228d9",
+      "evidence": [
+        "Unique 96-byte relocation-masked match to ti_sysbios_knl_Clock_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cdda80",
+      "name": "Swi_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int ti_sysbios_knl_Swi_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "06b80b27b692e5216d830ed2a32f5e6e",
+      "evidence": [
+        "Unique 96-byte relocation-masked match to ti_sysbios_knl_Swi_Module_startup__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2ce18c0",
+      "name": "LoggerBuf_Instance_finalize",
+      "kind": "function",
+      "prototype": "void xdc_runtime_LoggerBuf_Instance_finalize__E(xdc_runtime_LoggerBuf_Object *obj, int ec)",
+      "confidence": "probable",
+      "prefix_sha256": "4137f0330b3a431a98ea7763a5305cd3",
+      "evidence": [
+        "Unique 44-byte relocation-masked match to xdc_runtime_LoggerBuf_Instance_finalize__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2ce1940",
+      "name": "LoggerBuf_write0",
+      "kind": "function",
+      "prototype": "xdc_Void xdc_runtime_LoggerBuf_write0__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Log_Event evt, xdc_runtime_Types_ModuleId mid)",
+      "confidence": "probable",
+      "prefix_sha256": "4a44a5aebcb297a8fbe52dbd0630f304",
+      "evidence": [
+        "Unique 52-byte relocation-masked match to xdc_runtime_LoggerBuf_write0__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2ce1980",
+      "name": "LoggerBuf_write1",
+      "kind": "function",
+      "prototype": "xdc_Void xdc_runtime_LoggerBuf_write1__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Log_Event evt, xdc_runtime_Types_ModuleId mid, xdc_IArg a1)",
+      "confidence": "probable",
+      "prefix_sha256": "3da9a135fc98d245caf0e572583585ca",
+      "evidence": [
+        "Unique 48-byte relocation-masked match to xdc_runtime_LoggerBuf_write1__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2ce19c0",
+      "name": "LoggerBuf_write2",
+      "kind": "function",
+      "prototype": "xdc_Void xdc_runtime_LoggerBuf_write2__E(xdc_runtime_LoggerBuf_Handle __inst, xdc_runtime_Log_Event evt, xdc_runtime_Types_ModuleId mid, xdc_IArg a1, xdc_IArg a2)",
+      "confidence": "probable",
+      "prefix_sha256": "4f15acfd9db43f10d259e04d88415ce1",
+      "evidence": [
+        "Unique 44-byte relocation-masked match to xdc_runtime_LoggerBuf_write2__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2ce1a00",
+      "name": "Registry_findById",
+      "kind": "function",
+      "prototype": "xdc_runtime_Registry_Desc xdc_runtime_Registry_findById__E(xdc_runtime_Types_ModuleId mid)",
+      "confidence": "confirmed",
+      "prefix_sha256": "4bfc35316e5921991b9c2cc4947fb531",
+      "evidence": [
+        "Unique 64-byte relocation-masked match to xdc_runtime_Registry_findById__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2ce1a40",
+      "name": "SysMin_Module_startup",
+      "kind": "function",
+      "prototype": "xdc_Int xdc_runtime_SysMin_Module_startup__E(xdc_Int state)",
+      "confidence": "confirmed",
+      "prefix_sha256": "2758d6a06beed853bc0ba0590bcc19b9",
+      "evidence": [
+        "Unique 64-byte relocation-masked match to xdc_runtime_SysMin_Module_startup__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's."
+      ]
+    },
+    {
+      "address": "0xc2cec880",
+      "name": "Text_ropeText",
+      "kind": "function",
+      "prototype": "xdc_CString xdc_runtime_Text_ropeText__E(xdc_runtime_Text_RopeId rope)",
+      "confidence": "probable",
+      "prefix_sha256": "7b4e80484f6c1e9ad4afcef87cde8fc9",
+      "evidence": [
+        "Unique 32-byte relocation-masked match to xdc_runtime_Text_ropeText__E in the prebuilt xdc.runtime library shipped with SYS/BIOS 6.76.03.01, found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Under 64 bytes, so a coincidental match is less unlikely; marked probable as for LIB-1."
+      ]
+    },
+    {
+      "address": "0xc2cb6e40",
+      "name": "Timer_setPeriodMicroSecs",
+      "kind": "function",
+      "prototype": "xdc_Bool ti_sysbios_timers_timer64_Timer_setPeriodMicroSecs__E(ti_sysbios_timers_timer64_Timer_Handle __inst, xdc_UInt32 microsecs)",
+      "confidence": "confirmed",
+      "prefix_sha256": "83c17e20cb69ed3bb8f7d8e8cd7748c1",
+      "evidence": [
+        "Unique 544-byte relocation-masked match to ti_sysbios_timers_timer64_Timer_setPeriodMicroSecs__E in a SYS/BIOS 6.76.03.01 custom library built by configuro with CGT 8.3.13 for ti.targets.elf.C674 (analysis/sysbios_match.cfg and variants), found in this image by analysis/lib_match.py (2026-11-14; not carried by func_match; claim LIB-3). TI code, not Sonicware's.",
+        "Overrides a func_match carry at 0xc2cb99c4 (speculative; strings, body similarity 0.357), which is not an exact match."
+      ]
+    }
+  ],
+  "rejected": [
+    {
+      "name": "settings_get_auto_step",
+      "reason": "Checked 2026-11-15: Lofi-12 XT 1.5.205's matched accessor addresses 0xC2B749E8 = g_settings (0xC2B74984) + 0x64, Lofi's XT CASSETT field ([0,5] d=5, 01-platform-map.md 'PREF fields'), not AUTO STEP at +0x60. A neighbour match of a three-instruction accessor."
+    },
+    {
+      "name": "settings_set_auto_step",
+      "reason": "Checked 2026-11-15: Lofi-12 XT 1.5.205's matched accessor addresses 0xC2B749E8 = g_settings (0xC2B74984) + 0x64, Lofi's XT CASSETT field ([0,5] d=5, 01-platform-map.md 'PREF fields'), not AUTO STEP at +0x60. A neighbour match of a three-instruction accessor."
+    },
+    {
+      "name": "settings_set_launch",
+      "reason": "Checked 2026-11-15: the matched accessor does store g_settings+0x40, but Lofi-12 XT has no LAUNCH mode (no 'LAUNCH' string, not in its manual); what its +0x40 holds is not known, so the SmplTrek name does not apply."
+    }
+  ]
+}
