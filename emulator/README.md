@@ -5,7 +5,7 @@ firmware. The [C++ C674x core](core/README.md) executes original DSP binaries, i
 instruction and cycle by cycle, with models of the board's peripherals: timers and interrupts,
 EDMA, SPI1 and the OLED panel, I2C0 and the TLV320AIC3106 codec, McASP0 audio, MMC/SD with a FAT
 card image, the SPI NOR flash, UART1 to the panel MCU, UART0 with a MIDI IN sender and timestamped
-MIDI OUT, USB0 (no host), and the GPIO key matrix, encoders and SYNC pins. It runs SmplTrek, Lofi-12 XT and CyDrums updates (one board, the same panel) and a linked
+MIDI OUT, USB0 as a device with a scripted full-speed host, and the GPIO key matrix, encoders and SYNC pins. It runs SmplTrek, Lofi-12 XT and CyDrums updates (one board, the same panel) and a linked
 DSP program (ELF) you supply. It starts where the bootloader hands over to the SYSTEM image; the
 bootloader itself is not run. The emulator builds no firmware of its own, and no Sonicware code is
 in this repository: download the updates into `firmware/` (layout in `firmware/README.md`).
@@ -80,8 +80,8 @@ against the stock firmware's behaviour:
 - **Board:** interrupt event routing, PSC, pin mux, GPIO, the four timers, EDMA3, SPI0 (NOR) and
   SPI1 (OLED), I2C0 and the codec's control registers, McASP0 and its DMA ring, MMCSD0 with PIO and
   EDMA (SD 2.0 SDSC, single and multiblock), UART0 (MIDI DIN) and UART1, the SYNC IN and SYNC OUT
-  pins ([MIDI and SYNC](#midi-and-sync-2026-11-20)), USB0's control plane and CPPI DMA set-up
-  registers with no host, the DDR controller's status registers, and the cache control registers
+  pins ([MIDI and SYNC](#midi-and-sync-2026-11-20)), USB0 as a full-speed device with a scripted
+  host ([USB device](#usb-device-and-scripted-host-2026-11-20)), the DDR controller's status registers, and the cache control registers
   (memory is coherent). One guest clock drives everything: 372 MHz CPU, 24 MHz timer 0/1 input.
 - **Unit measurements** from device sessions M1 to M3 (`experiments/README.md`): misaligned
   accesses, the USB reserved words, EMIFA stores, the cache hand-off state, reserved low-memory
@@ -95,8 +95,8 @@ Not modelled, or modelled from assumption:
   headphones check in M1 (even words = left, HW-61), and key bounce, ghosting and settling;
 - the panel MCU beyond its analogue report stream: no `A1` version reply, no jitter or bursts, an
   untouched pad reads 0 (0 to 4 on the unit);
-- SD erase, high speed, SDIO and hot-plug; NOR program/erase timing and the part number; any USB
-  host traffic; DMA accesses to reserved memory; cache timing;
+- SD erase, high speed, SDIO and hot-plug; NOR program/erase timing and the part number; USB
+  isochronous and DMA traffic, high speed and host mode; DMA accesses to reserved memory; cache timing;
 - the places where the model continues with an unmeasured value, listed in
   [What the model assumes without stopping](#what-the-model-assumes-without-stopping).
 
@@ -222,6 +222,8 @@ distinct signs and the 2:1 level ratio. Stock's monitor output is silent in that
 
 `python3 -B emulator/tests/stock_midi.py --conditional` checks the MIDI and SYNC models against
 3.2.174; what it drives and what it found are under [MIDI and SYNC](#midi-and-sync-2026-11-20).
+`python3 -B emulator/tests/stock_usb.py --conditional` plugs a host into 3.2.174, enumerates it and
+exchanges USB MIDI ([USB device](#usb-device-and-scripted-host-2026-11-20)).
 
 `python3 -B emulator/tests/stock_survey.py --conditional` repeats the start-up survey above as a
 regression check: all thirteen SmplTrek, Lofi-12 XT and CyDrums updates, each with no card and with a blank
@@ -324,7 +326,7 @@ control and table (`0x2000`, `0x2800`-`0x28FC`), the queue manager's linking RAM
 and a descriptor memory region (`0x5000`, `0x5004`). `core/usb.cpp` now holds these registers with
 the field masks of SPRUH79C section 33.4; registers whose fields are write-only accept writes and
 fault on reads, a channel teardown faults, and queues, revision and pending registers stay
-unimplemented. No host is modelled, so nothing is ever transferred. `tests/test_usb.py` covers this.
+unimplemented. DMA traffic is not modelled (also not with the host of 2026-11-20), so nothing is transferred that way. `tests/test_usb.py` covers this.
 
 The stock firmware does not reach that set-up under the repository's policy: it first writes zero
 to the reserved offset `0x01E00808` (PC `0xc15e2264`), which still faults. In a study copy of the
@@ -948,6 +950,7 @@ What the model does and does not claim:
   firmware that forgets the pin mux shows no pulses. Other watched pins are recorded from the GPIO
   registers alone. Jack wiring, levels and any buffer between pin and jack are not modelled; if the
   board inverts SYNC IN, pass `active_high=False`.
+- USB MIDI goes through the USB host below, not through these calls.
 
 **Against the stock firmware.** `tests/stock_midi.py --conditional` runs 3.2.174 with the generated
 drum project and sets CLOCK OUT, OUT/THRU, COMMAND and the clock SOURCE through the firmware's own
@@ -979,6 +982,154 @@ menus. Results at 104 BPM, all in emulation (nothing here was measured on a unit
 
 These agree with the static findings HW-11, HW-27, HW-31 and HW-41; they do not raise any of them
 to `observed-device`.
+
+## USB device and scripted host (2026-11-20)
+
+USB0 is modelled as SPRUH79C chapter 33 describes it: the TI wrapper at `0x01E00000`, the MUSB core
+in peripheral mode at `0x01E00400`, and the PHY status in CFGCHIP2. On the cable is a scripted
+full-speed host, timed in guest cycles inside the core like the MIDI and SYNC peers, so a run is
+identical with fast-forward or without. From Python (`cpu.py`):
+
+| Call | What it does |
+|---|---|
+| `usb_attach()` | Plug the cable in: VBUS now (DEVCTL `0x99`, CFGCHIP2 USB0VBUSSENSE). When the device's pull-up shows (SOFTCONN with PSC1 module 1 on and the PHY clock good) the host debounces for 100 ms, resets the bus for 10 ms and enables the port; the first transfer starts 10 ms later. |
+| `usb_detach()` | Unplug: the session ends (INTRUSB DISCON), a transfer under way ends as `"disconnected"`. |
+| `usb_reset()` | Reset an enabled port again. |
+| `usb_sof(on)` | The 1 ms start-of-frame (372,000 cycles), on by default from the end of reset. Off, an idle bus suspends the device 3 ms after the last packet and the next packet resumes it. |
+| `usb_control(setup, data_or_length)` | SETUP, data stage, status stage. `setup` is the 8 bytes, or `(bmRequestType, bRequest, wValue, wIndex)` with wLength taken from the data or length. Returns a result (below); a STALL in any stage gives `status == "stall"`. |
+| `usb_out(ep, data)`, `usb_in(ep, max_length)` | Bulk or interrupt transfers in packets of the endpoint's size, retried while the device answers NAK. `usb_in` ends at `max_length` bytes or a short packet. |
+| `usb_enumerate(address=1)` | Waits for the port, then: 8 bytes of the device descriptor, SET_ADDRESS, the device descriptor, the configuration descriptor (9 bytes, then all of it), SET_CONFIGURATION. Returns the descriptors, vendor, product, the endpoints found and each step's result; raises `UsbError` if a step fails. Later transfers use the packet sizes it read. |
+| `usb_state()` | `port` (`detached`, `powered`, `debounce`, `reset`, `enabled`), `address` and `configuration` (the host's), `device_address` (what the controller answers to), `naks`, `stalls`, `errors`, `toggle_errors`, `bus_resets`, `sofs`, `frame`, `suspended`, `interrupt_mode`, `fifo_overflows`, `fifo_underflows`, and for each of endpoints 1 to 4 its packet sizes, FIFO placement, waiting packets and stall state. |
+
+Every transfer call takes `timeout_ms` (default 1000, in guest time) and `wait`. With `wait=True`
+the call runs the guest until the transfer has finished and returns
+`dict(status, data, sent, naks, submitted, completed)`: `status` is `ok`, `stall`, `timeout`,
+`disconnected` or `error` (no answer, or a packet that broke the protocol); `submitted` and
+`completed` are guest cycles. With `wait=False` it returns an id at once; the host works through
+queued transfers one at a time while the guest runs, `usb_result(id)` reads one and `usb_wait(id)`
+runs until it is done. The guest stops within 1,024 cycles of a transfer finishing.
+
+**Timing.** One bit is 31 cycles (372 MHz / 12 Mbit/s). A transaction takes effect at the cycle its
+handshake would end: 161 bit times for a SETUP, 97 + 8 per byte for an OUT, 58 for an IN that is
+NAKed or stalled and 97 + 8 per byte more for one that returns data; 4 bit times separate
+transactions. Bit stuffing is not counted. A NAKed transaction is retried back to back (every 62
+bit times for an IN); the retries between a NAK and the firmware's next access to USB0 are counted,
+not run, so NAK counts and completion cycles are exact while an idle wait costs nothing. After
+SET_ADDRESS the host waits 2 ms.
+
+**What the controller model covers** (register behaviour from SPRUH79C 33.2.6, 33.2.7.1 and 33.4):
+
+- Endpoint 0 and endpoints 1 to 4 through INDEX (`0x410`) and directly (`0x500` + 16 per endpoint),
+  a byte, half-word or word at a time; the FIFO registers at `0x420` + 4 per endpoint, where an
+  access loads or unloads as many bytes as it is wide.
+- The 4 KiB FIFO RAM with TXFIFOSZ/RXFIFOSZ/TXFIFOADDR/RXFIFOADDR. Packets are stored in that RAM at
+  the programmed place, so overlapping FIFOs corrupt each other as they would; endpoint 0 has 64
+  bytes at address 0. Double packet buffering holds two packets (TXPKTRDY then clears at once with
+  an interrupt, FIFOFULL shows two received). Loading past a FIFO's packet size or unloading an
+  empty one is counted in `usb_state()` and otherwise ignored.
+- Endpoint 0's handshake: RXPKTRDY and COUNT0 for SETUP and OUT data, SERV_RXPKTRDY, TXPKTRDY,
+  DATAEND, SENDSTALL and SENTSTALL, SETUPEND and SERV_SETUPEND, FLUSHFIFO. A status stage is NAKed
+  until DATAEND is set; a token the stage does not expect is answered with STALL, as in 33.2.7.1.1.5.
+- On endpoints 1 to 4: TXPKTRDY, FIFONOTEMPTY, RXPKTRDY, FIFOFULL, RXCOUNT, SENDSTALL/SENTSTALL,
+  FLUSHFIFO, CLRDATATOG, AUTOSET and AUTOCLEAR. Both ends keep the DATA0/DATA1 toggle: a packet
+  with the wrong one is acknowledged and dropped as a repeat and counted in `toggle_errors`, which
+  is how a missing CLRDATATOG after SET_CONFIGURATION shows. The host restarts its toggles after
+  SET_CONFIGURATION, CLEAR_FEATURE(ENDPOINT_HALT) and, for endpoints `usb_enumerate` found,
+  SET_INTERFACE.
+- FADDR: the controller answers to the new address from the end of the status stage of the control
+  transfer during which it was written; written between transfers, at once. Both orders in use
+  (write on decoding SET_ADDRESS, or after the status-stage interrupt as SPRUH79C says) work.
+- POWER (SOFTCONN; RESET reads 1 during bus reset, SUSPENDM while suspended; HSEN is held and has
+  no effect), DEVCTL, FRAME (the last SOF's number), INTRTX/INTRRX/INTRUSB with their enables.
+  Bus reset clears FADDR, INDEX, the FIFOs and the CSRs and keeps packet sizes and FIFO placement.
+- The wrapper: CTRLR (RESET, UINT), INTSRCR, INTSETR, INTCLRR, INTMSKR and its set and clear
+  registers, INTMASKEDR, EOIR, and event 19.
+- CFGCHIP2: USB0PHYCLKGD 64 cycles after the PLL is switched on (a functional delay, not a measured
+  lock time) and USB0VBUSSENSE while the cable is in.
+
+**Which interrupt registers to read (CTRLR.UINT).** SPRUH79C says this much:
+
+- UINT = 0 ("PDR interrupt handler enabled", the reset state): status is in INTSRCR, or INTMASKEDR
+  for the enabled part; a source is cleared by writing its bit to INTCLRR; the interrupt is
+  acknowledged by writing 0 to EOIR, and "while EOIR is not written, the interrupt from the USB
+  controller remains asserted" (33.2.8.13.1). INTSRCR bits 0 to 4 are endpoint 0 and TX endpoints
+  1 to 4, bits 9 to 12 RX endpoints 1 to 4, bits 16 to 23 INTRUSB, bit 24 DRVVBUS (33.4.9). The
+  core registers must not be read: "Performing a read clears the pending interrupt" (33.4.23,
+  33.4.24, 33.4.27).
+- UINT = 1: "you need to use the interrupt status/flag from the core register space" (33.4.9 to
+  33.4.15), that is INTRTX, INTRRX and INTRUSB, each cleared by reading it.
+- The example initialisation (33.3.1) uses UINT = 0 and programs both layers: INTRTXE = `0x1F`,
+  INTRRXE = `0x1E`, INTRUSBE = `0xFF` and INTMSKSETR = `0x01FF1E1F`.
+
+It does not say how events get from the core into INTSRCR, whether the core's enable registers gate
+that, or what EOIR does with UINT = 1. The model fills those in as follows, and this part is a
+reading, not a documented or measured fact:
+
+- The core always latches events in INTRTX/INTRRX/INTRUSB.
+- UINT = 0: an event enabled in INTRTXE/INTRRXE/INTRUSBE moves at once from the core register to
+  INTSRCR. An event that is not enabled there stays in the core register and never reaches INTSRCR
+  (it does when the enable is set later). Event 19 is raised once when INTSRCR & INTMSKR becomes
+  non-zero and again on a write to EOIR while it still is, so a handler reads INTSRCR (or
+  INTMASKEDR), writes that to INTCLRR, serves it and writes EOIR; anything that arrived meanwhile
+  raises the event again. A core register read returns and discards only events that were not
+  enabled.
+- UINT = 1: INTSRCR gets nothing from the core. Event 19 is raised when the enabled, latched core
+  events go from none to some, so a handler must read all three registers until all read 0: an
+  event that arrives while another is unread raises nothing new. A write to EOIR raises the event
+  again if something is still latched. Bits set through INTSETR still interrupt through the mask.
+
+For Enaga this means: use UINT = 0 as the stock does, enable every endpoint and bus event you
+want in both the core enables and INTMSKSETR, read INTSRCR, clear with INTCLRR, end with EOIR = 0,
+and leave INTRTX/INTRRX/INTRUSB alone. That sequence is the one with evidence behind it: it is the
+manual's example and what the stock firmware does on the unit. The model is deliberately the
+stricter one where the manual is silent (no core enable, no interrupt), so firmware that passes
+here does not depend on the open points. One difference from the manual to be aware of: after a
+controller reset the model's INTRTXE, INTRRXE and INTRUSBE read `0x0001`, 0 and 0 (kept from the
+earlier model), where SPRUH79C gives `0x1F`, `0x1E` and `0x06`; program them rather than rely on
+either.
+
+**Limits.**
+
+- Full speed only, control, bulk and interrupt transfers. An endpoint's ISO bit is held and the
+  host refuses transfers to it; USB audio is not carried. DMAEN faults: CPPI DMA has set-up
+  registers only, so the stock card-reader mode (mass storage over DMA) cannot run.
+- The host is one device on a root port: no hub, one transfer at a time in the order queued, no
+  frame scheduling around the SOF, no bit errors, no retries after a missing handshake (the transfer
+  ends as `error`). Its timings (100 ms debounce, 10 ms reset, 10 ms recovery) are fixed.
+- UNDERRUN is never set on a bulk endpoint, FLUSHFIFO raises no interrupt and FRCDATATOG is held
+  without effect: the manual does not settle them. Resume signalling from the device (POWER.RESUME)
+  faults.
+- The two reserved words the StarterWare driver reads (`0x01E0080C`, `0x01E0084C`) still read 0 with
+  a cable in; that was measured on the unit only with no host.
+
+**Against the stock firmware.** `tests/stock_usb.py --conditional` runs 3.2.174 with the generated
+drum project, plugs the host in once the sequencer is up and drives the firmware through its own
+menus. Results, all in emulation (nothing here was measured on a unit):
+
+- *Enumeration.* All six steps succeed with no STALL, error or toggle error: vendor `0x2fd7`,
+  product `0x0004`, bcdUSB 1.10, 64-byte endpoint 0, and a 234-byte configuration descriptor equal
+  byte for byte to the one `analysis/usb_desc_map.py` rebuilds statically (HW-12, HW-18): audio
+  control, two audio streaming interfaces (isochronous `0x01` and `0x82`, 196 bytes), MIDI streaming
+  on bulk `0x03` and `0x83` at 64 bytes. The firmware answers most requests before the host's
+  first IN (no NAK) and NAKs a few times while it prepares the configuration descriptor. It runs with
+  UINT = 0 and takes the SOF interrupt every millisecond.
+- *After SET_CONFIGURATION* it programs endpoint 3 for 64-byte packets with single-packet FIFOs at
+  RAM addresses 832 (IN) and 896 (OUT), and 256-byte FIFOs for the audio endpoints (OUT `0x01`
+  double-buffered at 64, IN `0x82` at 576) whose packet sizes stay 0 until an alternate setting is
+  chosen.
+- *Control.* A GET_DESCRIPTOR for a type it does not have is answered with STALL, and the next
+  request (GET_STATUS) succeeds. A second bus reset is followed by a second, identical enumeration.
+- *Bulk OUT.* The USB MIDI event `09 90 24 6E` (note-on, channel 1) on endpoint `0x03` plays the
+  drum track at the same level as the note on MIDI IN (rms 0.057); on a channel no track uses
+  nothing sounds. Neither packet is NAKed.
+- *Bulk IN.* With CLOCK OUT on and COMMAND = RX/TX, PLAY puts `0F FA 00 00` on endpoint `0x83` 5 ms
+  after the key and then `0F F8 00 00` 24 times per quarter note (62 in 1.5 s at 104 BPM), and STOP
+  puts `0F FC 00 00`. Stopped, the firmware sends no clock over USB and loads nothing into the FIFO,
+  where its DIN jack keeps sending `0xF8` ([MIDI and SYNC](#midi-and-sync-2026-11-20)); with the
+  factory settings endpoint `0x83` stays silent.
+
+These agree with the static findings HW-12 and HW-18; they do not raise either to
+`observed-device`.
 
 ## Backlog
 

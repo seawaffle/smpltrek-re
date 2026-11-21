@@ -167,6 +167,10 @@ The original guest performs these stores with the empty-card/erased-flash profil
 No low reads/fetches occur before the next fault. This bounds the observation; it does not establish
 that no later path can read the region.
 
+(Since 2026-11-20 USB0 also models endpoints, FIFOs and a scripted host: see "USB device and scripted
+host" in the [emulator README](README.md). What follows describes the model with no cable, which is
+unchanged apart from the endpoint and FIFO registers no longer faulting.)
+
 The disconnected USB0 model implements the C6748 wrapper reset, interrupt source/mask/set/clear/EOI,
 core address/POWER/interrupt enables, frame/status reads and CFGCHIP2 PHY status. Reset requires the
 PSC1 module-1 clock. Reset completion takes 16 DSP cycles and PHY settling takes 64 cycles, both

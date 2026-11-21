@@ -75,6 +75,7 @@ public:
     // Eager polling is the every-cycle reference, including during CPU waits.
     uint64_t next_event() const { return !enabled ? UINT64_MAX : eager_polling ? 0 : deadline; }
     void set_eager_polling(bool value) { eager_polling = value; deadline = 0; }
+    void rescheduled() { deadline = 0; } // A peer changed a device's next event from outside advance().
     bool contains(uint32_t address, uint32_t size) const;
     // Whether any byte of this 4 KiB page belongs to a device, enabled or not.
     bool device_page(uint32_t base) const;

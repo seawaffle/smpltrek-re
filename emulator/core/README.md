@@ -310,11 +310,13 @@ keeps strict faults by default.
 The `--reserved-low-writes` policy logs/discards CPU stores below L2 ROM without creating RAM or
 allowing reads/fetches, host/DMA writes or unresolved error observations; such stores do nothing on
 the unit either (device session M2, rows W1-W3). See the investigation for its exception-mask/routing
-guards. The USB0 disconnected control plane implements wrapper
-reset (16 functional DSP cycles), source/mask/set/clear/EOI interrupts, core address/POWER/enables,
-idle status and CFGCHIP2 PHY clock-good (64 functional cycles, internal 24 MHz reference).
-Software SOFTCONN produces no host traffic. Indexed endpoints, FIFOs, host/OTG, CPPI DMA and unknown
-MMIO remain strict faults. `tests/stock_smoke.py --usb-reset` verifies original reset/PHY polling.
+guards. USB0 implements wrapper
+reset (16 functional DSP cycles), source/mask/set/clear/EOI interrupts in both CTRLR.UINT modes, the
+MUSB core in peripheral mode (endpoint 0 and endpoints 1 to 4, indexed and direct registers, the
+4 KiB dynamic FIFO RAM) and CFGCHIP2 PHY clock-good (64 functional cycles, internal 24 MHz
+reference). With no cable, SOFTCONN produces no traffic; `c6_usb_attach` plugs in a scripted
+full-speed host (`usb.h`, and "USB device and scripted host" in the emulator README). Isochronous
+traffic, host/OTG, CPPI DMA traffic and unknown MMIO remain strict faults. `tests/stock_smoke.py --usb-reset` verifies original reset/PHY polling.
 The next accesses are the shared StarterWare `USBIntStatusControl` reads at `0x01e0080c` (PC
 `0xc15e2034`) and `0x01e0084c`, a Stellaris external-power and ID status pair that the C6748
 register table does not define. The M1 bench session (2026-11-16, row I5) measured both words as 0

@@ -109,8 +109,37 @@ int c6_reserved_low_read_stats(void *machine, uint64_t *fields);
 int c6_reserved_low_read(void *machine, uint32_t index, uint64_t *fields);
 /* fields[3]: CPU stores dropped at the empty EMIFA chip select 0 (0x40000000-0x5fffffff), the last one's address and PC. */
 int c6_emifa_stores(void *machine, uint64_t *fields);
-/* fields[6]: soft resets, PHY ready, soft connect, wrapper IRQ mask/source, IRQ count. */
+/* fields[6]: soft resets, PHY ready, soft connect, wrapper IRQ mask/source, event 19 count. */
 int c6_usb_stats(void *machine, uint64_t *fields);
+/* The scripted full-speed host on USB0's cable (usb.h). Attaching raises VBUS; the host resets the bus
+   once the device's pull-up shows, then sends SOFs unless c6_usb_sof turned them off (an idle bus
+   suspends the device after 3 ms). c6_usb_bus_reset resets an enabled port again. */
+int c6_usb_attach(void *machine, uint32_t attached);
+int c6_usb_bus_reset(void *machine);
+int c6_usb_sof(void *machine, uint32_t enabled);
+/* Queues a transfer; the host runs them one at a time as the guest runs. kind: 0 control (setup[8];
+   `data` and `size` for a write request's data stage, wLength bytes come back for a read request),
+   1 OUT (`data`), 2 IN (up to `length` bytes, ended by a short packet). `endpoint` is 1 to 4 for OUT
+   and IN. `max_packet` is the endpoint's packet size, 1 to 64. `timeout` is in guest cycles from now. */
+int c6_usb_submit(void *machine, uint32_t kind, uint32_t endpoint, const uint8_t *setup, const uint8_t *data, uint32_t size,
+                  uint32_t length, uint32_t max_packet, uint64_t timeout, uint32_t *id);
+/* fields[7]: status (0 pending, 1 done, 2 stalled, 3 timed out, 4 disconnected or reset, 5 no answer
+   or a protocol error), NAKs, cycle submitted, cycle finished, data size, bytes copied, OUT bytes
+   acknowledged. A finished transfer is forgotten once read. */
+int c6_usb_transfer(void *machine, uint32_t id, uint64_t *fields, uint8_t *data, uint32_t capacity);
+/* c6_run until the transfer has left the queue (checked every 1024 cycles) or the budget is spent. */
+int c6_usb_run(void *machine, uint32_t id, uint64_t budget);
+/* The host forgets an endpoint's data toggle (address with bit 7 for IN), as after SET_INTERFACE. It does
+   so itself after SET_CONFIGURATION (all) and CLEAR_FEATURE(ENDPOINT_HALT) (one). */
+int c6_usb_toggle_reset(void *machine, uint32_t endpoint);
+/* fields[20]: port (0 detached, 1 waiting for the pull-up, 2 debounce, 3 reset, 4 enabled), VBUS, the
+   address the host uses, configuration, the address the device answers to, bus resets, SOF on, SOFs sent,
+   frame, suspended, NAKs, STALLs, errors, data-toggle errors, transfers finished, transfers queued, FIFO
+   bytes overflowed, FIFO bytes underflowed, CTRLR, pull-up present. */
+int c6_usb_host_stats(void *machine, uint64_t *fields);
+/* Endpoint 1 to 4. fields[12]: TXMAXP, RXMAXP, TXFIFOSZ, RXFIFOSZ, TXFIFOADDR, RXFIFOADDR, packets waiting
+   to go, packets waiting to be unloaded, IN stalled, OUT stalled, TXCSR high byte, RXCSR high byte. */
+int c6_usb_endpoint(void *machine, uint32_t number, uint64_t *fields);
 /* USB0 reserved offsets 0x80c/0x84c read 0 and CPU word stores of 0 to 0x808/0x848 are ignored, as on
    the unit with no host attached (M1 bench I5, 2026-11-16). Other accesses to them are unsupported.
    fields[2]: accesses counted, trace rows kept (the first 4096). */

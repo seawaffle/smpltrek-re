@@ -43,7 +43,7 @@ ANALYSIS = ROOT / "analysis"
 PYTHON = [sys.executable, "-B"]
 STOCK = ("stock_boot", "stock_forward", "stock_project", "stock_audio", "stock_song", "stock_song --blocks",
          "stock_multitrack", "stock_multitrack --blocks", "stock_inst", "stock_inst --blocks", "stock_pad",
-         "stock_pad --blocks", "stock_midi", "stock_survey", "stock_survey --blocks", "stock_fuzz", "stock_fuzz --samples")
+         "stock_pad --blocks", "stock_midi", "stock_usb", "stock_survey", "stock_survey --blocks", "stock_fuzz", "stock_fuzz --samples")
 TI_LEVELS = ("O0", "O2", "O3", "O3s", "O3sp", "O2s2")
 GCC_LEVELS = ("O0", "O1", "O2", "O3", "Os")
 FAST = ("stock:stock_boot", "compiled:ti-O2", "compiled:gcc-O2")   # besides every unit file

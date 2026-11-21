@@ -1,4 +1,5 @@
-"""USB0 disconnected control-plane checks derived from SPRUH79C register behavior."""
+"""USB0 checks derived from SPRUH79C register behavior: the control plane with no cable, then the MUSB core in
+peripheral mode and the TI wrapper's interrupts against the scripted full-speed host (the test plays the firmware)."""
 from pathlib import Path
 import shutil
 import struct
@@ -218,7 +219,9 @@ class UsbDisconnected(unittest.TestCase):
             self.assertEqual(self.get(cpu, BASE + 0x460, 1), 0x80)
             self.assertEqual(cpu.usb_state()["interrupts"], 0)
             self.assertEqual(cpu.usb_state()["soft_connect"], 1)
-            for offset in (0x410, 0x420, 0x80c, 0x84c, 0x1000):  # host reads: the two reserved words answer the CPU only
+            self.assertEqual(self.get(cpu, BASE + 0x410), 0)       # indexed endpoint 0: nothing received
+            self.assertEqual(cpu.usb_state()["port"], "detached")
+            for offset in (0x46c, 0x480, 0x80c, 0x84c, 0x1000):  # host reads: the two reserved words answer the CPU only
                 with self.assertRaisesRegex(ValueError, "unimplemented USB0|CPU reads only"):
                     self.get(cpu, BASE + offset)
             for offset, value, size in ((4, 0x10, 4), (0x460, 1, 1), (0x40f, 1, 1), (0x401, 4, 1)):
@@ -267,6 +270,467 @@ class UsbDisconnected(unittest.TestCase):
             cpu.run(32)
             for offset in (0x10, 0x50, 0x2000, 0x4080, 0x4084, 0x5000, 0x5004):
                 self.assertEqual(self.get(cpu, BASE + offset), 0, hex(offset))
+
+
+FRAME, BIT = 372000, 31
+DEBOUNCE, RESET, RECOVERY = 100 * FRAME, 10 * FRAME, 10 * FRAME
+EP0, RESUME_IRQ, RESET_IRQ, SOF_IRQ = 1, 1 << 17, 1 << 18, 1 << 19
+
+
+@unittest.skipUnless(shutil.which("g++"), "host g++ required")
+class UsbHost(unittest.TestCase):
+    """The test is the firmware: it programs USB0 through the bus and answers the scripted host."""
+    setUpClass = classmethod(UsbDisconnected.setUpClass.__func__)
+    tearDownClass = classmethod(UsbDisconnected.tearDownClass.__func__)
+    machine, enable_clock = UsbDisconnected.machine, UsbDisconnected.enable_clock
+    get, put = staticmethod(UsbDisconnected.get), staticmethod(UsbDisconnected.put)
+
+    def device(self, uint=False, connect=True, sof=False):
+        cpu = self.machine()
+        self.enable_clock(cpu)
+        self.put(cpu, PHY, 0x972)
+        cpu.run(64)
+        self.put(cpu, BASE + 4, 8 if uint else 0)
+        self.put(cpu, BASE + 0x30, 0x01ff1e1f)
+        self.put(cpu, BASE + 0x406, 0x1f, 2)
+        self.put(cpu, BASE + 0x408, 0x1e, 2)
+        self.put(cpu, BASE + 0x40b, 0xff, 1)
+        if connect:
+            self.put(cpu, BASE + 0x401, 0x40, 1)
+        cpu.usb_sof(sof)   # most tests keep SOF interrupts out of the way: the idle bus suspends, the first packet resumes
+        return cpu
+
+    def plugged(self, **options):
+        """A device on an enabled port at the cycle the first transfer may start, interrupts acknowledged."""
+        cpu = self.device(**options)
+        cpu.usb_attach()
+        cpu.run(DEBOUNCE + RESET + RECOVERY)
+        self.assertEqual(cpu.usb_state()["port"], "enabled")
+        self.acknowledge(cpu)
+        return cpu
+
+    def acknowledge(self, cpu):
+        status = self.get(cpu, BASE + 0x20)
+        self.put(cpu, BASE + 0x28, status)
+        self.put(cpu, BASE + 0x3c, 0)
+        return status
+
+    def until(self, cpu, bit, milliseconds=20):
+        """Run until INTSRCR shows `bit`, then acknowledge everything pending."""
+        for _ in range(milliseconds * FRAME // 1000):
+            if self.get(cpu, BASE + 0x20) & bit:
+                return self.acknowledge(cpu)
+            cpu.run(1000)
+        self.fail(f"no USB interrupt source {bit:#x} within {milliseconds} ms")
+
+    def finished(self, cpu, transfer, milliseconds=20):
+        for _ in range(milliseconds * FRAME // 1000):
+            result = cpu.usb_result(transfer)
+            if result["status"] != "pending":
+                return result
+            cpu.run(1000)
+        self.fail(f"USB transfer still pending after {milliseconds} ms")
+
+    def unload(self, cpu, endpoint, widths):
+        return b"".join(cpu.read(BASE + 0x420 + 4 * endpoint, width) for width in widths)
+
+    def load(self, cpu, endpoint, data, widths):
+        at = 0
+        for width in widths:
+            cpu.write(BASE + 0x420 + 4 * endpoint, data[at:at + width]); at += width
+        self.assertEqual(at, len(data))
+
+    def configure(self, cpu, endpoint, rx=None, tx=None):
+        """Dynamic FIFO placement and packet size through the index register: (FIFOSZ, address / 8, MAXP)."""
+        self.put(cpu, BASE + 0x40e, endpoint, 1)
+        if rx:
+            self.put(cpu, BASE + 0x463, rx[0], 1)
+            self.put(cpu, BASE + 0x466, rx[1], 2)
+            self.put(cpu, BASE + 0x414, rx[2], 2)
+            self.put(cpu, BASE + 0x416, 0x80, 1)                          # CLRDATATOG
+        if tx:
+            self.put(cpu, BASE + 0x462, tx[0], 1)
+            self.put(cpu, BASE + 0x464, tx[1], 2)
+            self.put(cpu, BASE + 0x410, tx[2], 2)
+            self.put(cpu, BASE + 0x412, 0x40, 1)                          # CLRDATATOG
+        self.put(cpu, BASE + 0x40e, 0, 1)
+
+    def test_attach_waits_for_the_pull_up_then_debounces_resets_and_sends_sof(self):
+        with self.device(connect=False, sof=True) as cpu:
+            self.assertEqual(self.get(cpu, BASE + 0x460, 1), 0x80)
+            cpu.usb_attach()
+            self.assertEqual(self.get(cpu, BASE + 0x460, 1), 0x99)       # B device, VBUS valid, session
+            self.assertEqual(self.get(cpu, PHY), 0x30972)                 # USB0VBUSSENSE
+            cpu.run(2 * DEBOUNCE)
+            self.assertEqual(cpu.usb_state()["port"], "powered")          # no pull-up: the host sees no device
+            transfer = cpu.usb_control((0x80, 6, 0x0100, 0), 8, wait=False, timeout_ms=500)   # waits for the port
+            self.put(cpu, BASE + 0x400, 5, 1)
+            self.put(cpu, BASE + 0x40e, 3, 1)
+            self.put(cpu, BASE + 0x401, 0x40, 1)                          # SOFTCONN
+            start = cpu.cycles()
+            self.assertEqual(cpu.usb_state()["port"], "debounce")
+            cpu.run(DEBOUNCE - 1)
+            self.assertEqual((cpu.usb_state()["port"], self.get(cpu, BASE + 0x20)), ("debounce", 0))
+            cpu.run(1)
+            self.assertEqual((cpu.usb_state()["port"], self.get(cpu, BASE + 0x20)), ("reset", RESET_IRQ))
+            self.assertEqual(self.get(cpu, BASE + 0x401, 1), 0x48)       # POWER.RESET while the bus is in reset
+            self.assertEqual((self.get(cpu, BASE + 0x400, 1), self.get(cpu, BASE + 0x40e, 1)), (0, 0))
+            self.assertEqual(self.get(cpu, 0x01800000) & (1 << 19), 1 << 19)   # event 19
+            self.acknowledge(cpu)
+            cpu.run(RESET)
+            self.assertEqual((cpu.usb_state()["port"], self.get(cpu, BASE + 0x401, 1)), ("enabled", 0x40))
+            cpu.run(FRAME - 1)
+            self.assertEqual(self.get(cpu, BASE + 0x20), 0)
+            cpu.run(1)
+            self.assertEqual((self.get(cpu, BASE + 0x20), self.get(cpu, BASE + 0x40c, 2)), (SOF_IRQ, 1))
+            cpu.run(5 * FRAME)
+            self.assertEqual((self.get(cpu, BASE + 0x40c, 2), cpu.usb_state()["sofs"]), (6, 6))
+            # The queued transfer starts 10 ms after the reset: its SETUP transaction is 161 bit times long.
+            cpu.run(RECOVERY - 6 * FRAME + 161 * BIT - 1)
+            self.assertFalse(self.acknowledge(cpu) & EP0)
+            cpu.run(1)
+            self.assertTrue(self.get(cpu, BASE + 0x20) & EP0)
+            self.assertEqual(cpu.cycles(), start + DEBOUNCE + RESET + RECOVERY + 161 * BIT)
+            self.acknowledge(cpu)
+            cpu.usb_detach()
+            self.assertEqual(self.get(cpu, BASE + 0x20), 1 << 21)        # DISCON: the session ended
+            self.assertEqual((self.get(cpu, BASE + 0x460, 1), self.get(cpu, PHY)), (0x80, 0x20972))
+            self.assertEqual(cpu.usb_result(transfer)["status"], "disconnected")
+            state = cpu.usb_state()
+            self.assertEqual((state["port"], state["cable_connected"], state["bus_resets"]), ("detached", False, 1))
+
+    def test_control_read_in_three_packets_through_every_fifo_width_and_both_register_maps(self):
+        descriptor = bytes(range(0x40, 0x52))
+        with self.plugged() as cpu:
+            transfer = cpu.usb_control((0x80, 6, 0x0100, 0), 18, wait=False, max_packet=8)
+            self.until(cpu, EP0)
+            self.put(cpu, BASE + 0x40e, 0, 1)
+            self.assertEqual((self.get(cpu, BASE + 0x412, 2), self.get(cpu, BASE + 0x418, 2)), (1, 8))   # RXPKTRDY, COUNT0
+            self.assertEqual(self.get(cpu, BASE + 0x41f, 1), 0x06)       # CONFIGDATA: dynamic FIFOs, soft connect
+            setup = self.unload(cpu, 0, (4, 2, 1, 1))
+            self.assertEqual(setup, bytes([0x80, 6, 0, 1, 0, 0, 18, 0]))
+            self.assertEqual(self.get(cpu, BASE + 0x508, 2), 0)
+            cpu.run(3 * FRAME)                                            # IN tokens are NAKed until the firmware answers
+            self.assertAlmostEqual(cpu.usb_result(transfer)["naks"], 3 * FRAME // (62 * BIT), delta=3)
+            self.put(cpu, BASE + 0x502, 0x40, 1)                          # SERV_RXPKTRDY
+            self.assertEqual(self.get(cpu, BASE + 0x502, 2), 0)
+            for at, widths in ((0, (4, 4)), (8, (2, 2, 2, 1, 1))):
+                self.load(cpu, 0, descriptor[at:at + 8], widths)
+                self.put(cpu, BASE + 0x502, 0x02, 1)                      # TXPKTRDY
+                self.assertEqual(self.get(cpu, BASE + 0x502, 1), 0x02)
+                self.put(cpu, BASE + 0x502, 0x02, 1)                      # read back and rewritten: still that one packet
+                self.until(cpu, EP0)
+                self.assertEqual(self.get(cpu, BASE + 0x502, 1), 0)      # sent
+            self.load(cpu, 0, descriptor[16:], (1, 1))
+            self.put(cpu, BASE + 0x412, 0x0a, 1)                          # TXPKTRDY | DATAEND
+            self.until(cpu, EP0)
+            self.assertEqual(self.get(cpu, BASE + 0x502, 1), 0x08)       # DATAEND until the status stage
+            self.until(cpu, EP0)                                          # the status stage
+            self.assertEqual(self.get(cpu, BASE + 0x502, 1), 0)
+            result = self.finished(cpu, transfer)
+            self.assertEqual((result["status"], result["data"]), ("ok", descriptor))
+            state = cpu.usb_state()
+            self.assertEqual((state["stalls"], state["errors"], state["fifo_overflows"], state["fifo_underflows"]), (0, 0, 0, 0))
+            self.assertEqual(self.unload(cpu, 0, (1,)), b"\0")            # nothing to unload: counted
+            self.assertEqual(cpu.usb_state()["fifo_underflows"], 1)
+
+    def test_set_address_takes_effect_after_the_status_stage_whenever_faddr_is_written(self):
+        for early in (True, False):
+            with self.subTest(early=early), self.plugged() as cpu:
+                transfer = cpu.usb_control((0x00, 5, 9, 0), wait=False)
+                self.until(cpu, EP0)
+                self.assertEqual(self.unload(cpu, 0, (4, 4)), bytes([0, 5, 9, 0, 0, 0, 0, 0]))
+                if early:
+                    self.put(cpu, BASE + 0x400, 9, 1)                     # written before the status stage
+                    self.assertEqual((self.get(cpu, BASE + 0x400, 1), cpu.usb_state()["device_address"]), (9, 0))
+                cpu.run(FRAME)
+                self.assertEqual(cpu.usb_result(transfer)["status"], "pending")   # status stage NAKed until DATAEND
+                self.put(cpu, BASE + 0x502, 0x48, 1)                      # SERV_RXPKTRDY | DATAEND
+                self.until(cpu, EP0)                                      # the status stage
+                if not early:
+                    self.assertEqual(cpu.usb_state()["device_address"], 0)
+                    self.put(cpu, BASE + 0x400, 9, 1)                     # as SPRUH79C says: after that interrupt
+                self.assertEqual(self.finished(cpu, transfer)["status"], "ok")
+                state = cpu.usb_state()
+                self.assertEqual((state["address"], state["device_address"]), (9, 9))
+                second = cpu.usb_control((0x80, 0, 0, 0), 2, wait=False)   # addressed to 9, after 2 ms of recovery
+                self.until(cpu, EP0)
+                self.assertGreater(cpu.cycles() - cpu.usb_result(second)["submitted"], FRAME)
+                self.put(cpu, BASE + 0x400, 3, 1)                         # a wrong address, written in mid-transfer...
+                self.unload(cpu, 0, (4, 4))
+                self.put(cpu, BASE + 0x502, 0x40, 1)
+                self.load(cpu, 0, b"\1\0", (2,))
+                self.put(cpu, BASE + 0x502, 0x0a, 1)
+                self.assertEqual(self.finished(cpu, second)["status"], "ok")   # ...is used from the end of this transfer
+                self.assertEqual(cpu.usb_state()["device_address"], 3)
+                third = cpu.usb_control((0x80, 0, 0, 0), 2, wait=False)
+                self.assertEqual(self.finished(cpu, third)["status"], "error")   # nothing answers at address 9
+                self.assertEqual(cpu.usb_state()["errors"], 1)
+
+    def test_control_write_stall_and_setup_end(self):
+        with self.plugged() as cpu:
+            payload = bytes(range(70))
+            transfer = cpu.usb_control((0x21, 9, 0x0200, 0), payload, wait=False)
+            self.until(cpu, EP0)
+            self.unload(cpu, 0, (4, 4))
+            self.put(cpu, BASE + 0x502, 0x40, 1)
+            self.until(cpu, EP0)
+            self.assertEqual((self.get(cpu, BASE + 0x502, 1), self.get(cpu, BASE + 0x508, 1)), (1, 64))
+            first = self.unload(cpu, 0, (4,) * 16)
+            cpu.run(FRAME)                                                # the second packet is NAKed meanwhile
+            self.put(cpu, BASE + 0x502, 0x40, 1)
+            self.until(cpu, EP0)
+            self.assertEqual(self.get(cpu, BASE + 0x508, 1), 6)
+            self.assertEqual(first + self.unload(cpu, 0, (4, 2)), payload)
+            self.put(cpu, BASE + 0x502, 0x48, 1)                          # last packet: SERV_RXPKTRDY | DATAEND
+            self.until(cpu, EP0)                                          # status stage
+            result = self.finished(cpu, transfer)
+            self.assertEqual((result["status"], result["sent"]), ("ok", 70))
+            self.assertAlmostEqual(result["naks"], FRAME // (149 * BIT), delta=3)   # a 6-byte OUT retry is 149 bit times
+
+            transfer = cpu.usb_control((0x80, 6, 0x0f00, 0), 8, wait=False)   # a request the firmware refuses
+            self.until(cpu, EP0)
+            self.unload(cpu, 0, (4, 4))
+            self.put(cpu, BASE + 0x502, 0x60, 1)                          # SERV_RXPKTRDY | SENDSTALL
+            self.until(cpu, EP0)
+            self.assertEqual(self.get(cpu, BASE + 0x502, 1), 0x04)       # SENTSTALL
+            self.put(cpu, BASE + 0x502, 0, 1)
+            self.assertEqual(self.get(cpu, BASE + 0x502, 1), 0)
+            self.assertEqual(self.finished(cpu, transfer)["status"], "stall")
+
+            abandoned = cpu.usb_control((0x80, 6, 0x0100, 0), 18, wait=False, timeout_ms=5)   # never answered
+            self.until(cpu, EP0)
+            self.unload(cpu, 0, (4, 4))
+            self.put(cpu, BASE + 0x502, 0x40, 1)
+            self.load(cpu, 0, bytes(8), (4, 4))                           # a packet left in the FIFO, never made ready
+            result = self.finished(cpu, abandoned)
+            self.assertEqual(result["status"], "timeout")
+            self.assertAlmostEqual(result["naks"], 5 * FRAME // (62 * BIT), delta=5)   # an IN retry is 62 bit times
+            transfer = cpu.usb_control((0x80, 0, 0, 0), 2, wait=False)   # the next SETUP ends the abandoned transfer
+            self.until(cpu, EP0)
+            self.assertEqual(self.get(cpu, BASE + 0x502, 1), 0x11)       # SETUPEND | RXPKTRDY
+            self.put(cpu, BASE + 0x502, 0x80, 1)                          # SERV_SETUPEND
+            self.assertEqual(self.get(cpu, BASE + 0x502, 1), 0x01)
+            self.assertEqual(self.unload(cpu, 0, (4, 4)), bytes([0x80, 0, 0, 0, 0, 0, 2, 0]))
+            self.put(cpu, BASE + 0x502, 0x40, 1)
+            self.load(cpu, 0, b"\1\0", (1, 1))
+            self.put(cpu, BASE + 0x502, 0x0a, 1)
+            result = self.finished(cpu, transfer)
+            self.assertEqual((result["status"], result["data"]), ("ok", b"\1\0"))
+            self.assertEqual(cpu.usb_state()["stalls"], 1)
+
+    def test_bulk_out_naks_until_unloaded_double_buffers_and_checks_the_data_toggle(self):
+        RX1 = 1 << 9
+        with self.plugged() as cpu:
+            self.configure(cpu, 1, rx=(3, 8, 64))
+            state = cpu.usb_state()["endpoints"][0]
+            self.assertEqual((state["rx_max_packet"], state["rx_fifo"]), (64, dict(address=64, packet=64, packets=1)))
+            data = bytes(range(100))
+            transfer = cpu.usb_out(1, data, wait=False)
+            self.until(cpu, RX1)
+            self.assertEqual((self.get(cpu, BASE + 0x516, 2), self.get(cpu, BASE + 0x518, 2)), (0x03, 64))   # RXPKTRDY, FIFOFULL
+            first = self.unload(cpu, 1, (4,) * 15 + (2, 1))
+            self.assertEqual(self.get(cpu, BASE + 0x518, 2), 1)
+            first += self.unload(cpu, 1, (1,))
+            cpu.run(2 * FRAME)
+            pending = cpu.usb_result(transfer)
+            self.assertEqual((pending["status"], pending["sent"]), ("pending", 64))
+            # The second packet (36 bytes: 385 bit times with its token and handshake, then a 4-bit gap) is retried.
+            self.assertAlmostEqual(pending["naks"], 2 * FRAME // (389 * BIT), delta=3)
+            self.assertFalse(self.get(cpu, BASE + 0x20) & RX1)
+            self.put(cpu, BASE + 0x516, 0, 1)                             # RXPKTRDY cleared
+            self.until(cpu, RX1)
+            self.assertEqual(self.get(cpu, BASE + 0x518, 2), 36)
+            self.assertEqual(first + self.unload(cpu, 1, (4,) * 9), data)
+            self.put(cpu, BASE + 0x516, 0, 1)
+            result = self.finished(cpu, transfer)
+            self.assertEqual((result["status"], result["sent"]), ("ok", 100))
+
+            # CLRDATATOG in mid-stream: the device expects DATA0, the host's next packet is DATA1 and is
+            # acknowledged but dropped as a repeat.
+            self.finished(cpu, cpu.usb_out(1, b"abc", wait=False))
+            self.until(cpu, RX1)
+            self.put(cpu, BASE + 0x516, 0x80, 1)                          # clears RXPKTRDY too
+            self.assertEqual(self.finished(cpu, cpu.usb_out(1, b"lost", wait=False))["status"], "ok")
+            cpu.run(FRAME)
+            self.assertEqual((self.get(cpu, BASE + 0x516, 1), cpu.usb_state()["toggle_errors"]), (0, 1))
+
+            self.configure(cpu, 1, rx=(0x13, 8, 64))                       # double packet buffering: 2 x 64 bytes
+            cpu.usb_reset(); cpu.run(RESET + RECOVERY); self.acknowledge(cpu)   # both ends start from DATA0 again
+            data = bytes(range(128, 256))
+            result = self.finished(cpu, cpu.usb_out(1, data, wait=False))
+            self.assertEqual((result["status"], result["naks"]), ("ok", 0))   # both packets fit
+            self.assertTrue(self.acknowledge(cpu) & RX1)
+            self.assertEqual(self.get(cpu, BASE + 0x516, 1), 0x03)
+            got = self.unload(cpu, 1, (4,) * 16)
+            self.put(cpu, BASE + 0x516, 0, 1)
+            self.assertTrue(self.get(cpu, BASE + 0x20) & RX1)             # the second packet is ready at once
+            self.assertEqual(self.get(cpu, BASE + 0x516, 1), 0x01)
+            self.assertEqual(got + self.unload(cpu, 1, (4,) * 16), data)
+            self.put(cpu, BASE + 0x516, 0x10, 1)                          # FLUSHFIFO drops it
+            self.assertEqual(self.get(cpu, BASE + 0x516, 1), 0)
+            self.acknowledge(cpu)
+
+            self.put(cpu, BASE + 0x516, 0x20, 1)                          # SENDSTALL
+            self.assertEqual(self.finished(cpu, cpu.usb_out(1, b"x", wait=False))["status"], "stall")
+            self.assertEqual(self.get(cpu, BASE + 0x516, 1), 0x60)       # SENTSTALL
+            self.assertTrue(self.acknowledge(cpu) & RX1)
+            with self.assertRaisesRegex(ValueError, "DMA"):
+                self.put(cpu, BASE + 0x517, 0x20, 1)
+
+    def test_bulk_in_naks_until_loaded_then_stall_flush_and_autoset(self):
+        TX2 = 1 << 2
+        with self.plugged() as cpu:
+            self.configure(cpu, 2, tx=(3, 16, 64))
+            data = bytes(range(100, 200))
+            transfer = cpu.usb_in(0x82, 100, wait=False)
+            cpu.run(FRAME)
+            pending = cpu.usb_result(transfer)
+            self.assertEqual(pending["status"], "pending")
+            self.assertAlmostEqual(pending["naks"], FRAME // (62 * BIT), delta=2)
+            self.load(cpu, 2, data[:64], (4,) * 16)
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0)
+            self.put(cpu, BASE + 0x522, 1, 1)                             # TXPKTRDY
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0x03)       # with FIFONOTEMPTY
+            self.until(cpu, TX2)
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0)
+            self.load(cpu, 2, data[64:], (4, 4, 4, 4, 4, 4, 4, 4, 2, 1, 1))
+            self.put(cpu, BASE + 0x522, 1, 1)
+            result = self.finished(cpu, transfer)
+            self.assertEqual((result["status"], result["data"]), ("ok", data))
+            self.acknowledge(cpu)
+
+            silent = cpu.usb_in(0x82, 64, wait=False, timeout_ms=10)
+            result = self.finished(cpu, silent)
+            # The first IN is answered 58 bit times in; each retry takes 62.
+            self.assertEqual((result["status"], result["naks"]), ("timeout", 1 + (10 * FRAME - 58 * BIT) // (62 * BIT)))
+            self.assertEqual(result["completed"] - result["submitted"], 10 * FRAME)
+
+            self.load(cpu, 2, b"gone", (4,))
+            self.put(cpu, BASE + 0x522, 1, 1)
+            self.put(cpu, BASE + 0x522, 0x08, 1)                          # FLUSHFIFO
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0)
+            self.put(cpu, BASE + 0x523, 0x80, 1)                          # AUTOSET: a full packet goes by itself
+            self.load(cpu, 2, bytes(64), (4,) * 16)
+            self.assertEqual(self.get(cpu, BASE + 0x522, 2), 0x8003)
+            result = self.finished(cpu, cpu.usb_in(0x82, 64, wait=False))
+            self.assertEqual((result["status"], result["data"], result["naks"]), ("ok", bytes(64), 0))
+            self.acknowledge(cpu)
+
+            self.put(cpu, BASE + 0x522, 0x10, 1)                          # SENDSTALL
+            self.assertEqual(self.finished(cpu, cpu.usb_in(0x82, 64, wait=False))["status"], "stall")
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0x30)       # SENDSTALL | SENTSTALL
+            self.assertTrue(self.acknowledge(cpu) & TX2)
+            state = cpu.usb_state()
+            self.assertEqual((state["stalls"], state["errors"], state["toggle_errors"]), (1, 0, 0))
+            with self.assertRaisesRegex(ValueError, "endpoints 1 to 4"):
+                cpu.usb_in(0x85, 8, wait=False)
+
+    def test_uint_selects_wrapper_or_core_interrupt_registers(self):
+        # UINT = 0: the wrapper takes each event that is enabled in the core.
+        with self.plugged() as cpu:
+            self.put(cpu, BASE + 0x406, 0, 2)                             # INTRTXE: endpoint 0 off
+            cpu.usb_control((0x80, 0, 0, 0), 2, wait=False)
+            cpu.run(FRAME)
+            self.assertEqual(self.get(cpu, BASE + 0x502, 1), 1)          # the SETUP is there
+            self.assertEqual((self.get(cpu, BASE + 0x20), self.get(cpu, BASE + 0x38)), (RESUME_IRQ, RESUME_IRQ))
+            self.acknowledge(cpu)
+            count = cpu.usb_state()["interrupts"]
+            self.put(cpu, BASE + 0x406, 1, 2)                             # enabled: handed over, event 19
+            self.assertEqual((self.get(cpu, BASE + 0x20), self.get(cpu, BASE + 0x38)), (EP0, EP0))
+            self.assertEqual(cpu.usb_state()["interrupts"], count + 1)
+            self.assertEqual(self.get(cpu, BASE + 0x402, 2), 0)          # nothing left in the core register
+            self.put(cpu, BASE + 0x34, EP0)                               # masked in the wrapper: a source, no interrupt
+            self.assertEqual((self.get(cpu, BASE + 0x20), self.get(cpu, BASE + 0x38)), (EP0, 0))
+            self.assertEqual(cpu.usb_state()["interrupt_mode"], "wrapper (UINT = 0)")
+        with self.plugged() as cpu:                                       # a core register read loses the event
+            self.put(cpu, BASE + 0x406, 0, 2)
+            cpu.usb_control((0x80, 0, 0, 0), 2, wait=False)
+            cpu.run(FRAME)
+            self.assertEqual((self.get(cpu, BASE + 0x402, 2), self.get(cpu, BASE + 0x402, 2)), (1, 0))
+            self.put(cpu, BASE + 0x406, 1, 2)
+            self.assertEqual(self.get(cpu, BASE + 0x20), RESUME_IRQ)
+        # UINT = 1: the core registers hold the events and clear on read; the wrapper's source stays empty.
+        with self.device(uint=True) as cpu:
+            self.put(cpu, BASE + 0x40b, 0x0c, 1)                          # INTRUSBE: reset and SOF
+            self.put(cpu, 0x0180010c, 0x0f0e0d13)                         # CPU interrupt 12 takes event 19
+            cpu.usb_attach()
+            cpu.run(DEBOUNCE)
+            self.assertEqual(cpu.usb_state()["interrupts"], 1)
+            self.assertEqual(self.get(cpu, 0x01800000) & (1 << 19), 1 << 19)
+            self.put(cpu, 0x01800040, 1 << 19)
+            self.assertEqual(self.get(cpu, BASE + 0x20), 0)
+            self.assertEqual((self.get(cpu, BASE + 0x40a, 1), self.get(cpu, BASE + 0x40a, 1)), (4, 0))   # reset, read once
+            cpu.run(RESET + RECOVERY)
+            self.assertEqual(cpu.usb_state()["interrupts"], 1)
+            cpu.usb_control((0x80, 0, 0, 0), 2, wait=False)
+            cpu.run(FRAME)
+            self.assertEqual(cpu.usb_state()["interrupts"], 2)           # the core's output went from idle to driven
+            self.assertEqual(self.get(cpu, 0x01800000) & (1 << 19), 1 << 19)
+            self.assertEqual((self.get(cpu, BASE + 0x20), self.get(cpu, BASE + 0x38)), (0, 0))
+            self.assertEqual((self.get(cpu, BASE + 0x402, 2), self.get(cpu, BASE + 0x402, 2)), (1, 0))
+            self.assertEqual(cpu.usb_state()["interrupt_mode"], "core registers (UINT = 1)")
+            # An event while another is still unread raises nothing new: the handler must read until all are 0.
+            self.unload(cpu, 0, (4, 4))
+            self.put(cpu, BASE + 0x502, 0x40, 1)
+            self.load(cpu, 0, b"\0\0", (2,))
+            cpu.usb_sof(True)
+            cpu.run(FRAME)                                                # a SOF, left unread
+            self.assertEqual(cpu.usb_state()["interrupts"], 3)
+            self.put(cpu, BASE + 0x502, 0x0a, 1)
+            cpu.run(FRAME)                                                # the data and status stages: endpoint 0 events
+            self.assertEqual(cpu.usb_state()["interrupts"], 3)
+            self.assertEqual((self.get(cpu, BASE + 0x402, 2), self.get(cpu, BASE + 0x40a, 1)), (1, 0x0b))   # with the unenabled suspend and resume
+
+    def test_idle_bus_suspends_after_3_ms_and_the_next_packet_resumes(self):
+        with self.device(sof=False) as cpu:
+            cpu.usb_attach()
+            cpu.run(DEBOUNCE + RESET)
+            self.acknowledge(cpu)
+            cpu.run(3 * FRAME - 1)
+            self.assertEqual((self.get(cpu, BASE + 0x20), self.get(cpu, BASE + 0x401, 1)), (0, 0x40))
+            cpu.run(1)
+            self.assertEqual((self.get(cpu, BASE + 0x20), self.get(cpu, BASE + 0x401, 1)), (1 << 16, 0x42))   # SUSPEND
+            self.assertTrue(cpu.usb_state()["suspended"])
+            self.acknowledge(cpu)
+            cpu.usb_control((0x80, 0, 0, 0), 2, wait=False)
+            cpu.run(RECOVERY)
+            self.assertEqual(self.get(cpu, BASE + 0x20), 1 << 17 | EP0)   # RESUME, then the SETUP
+            self.assertEqual(self.get(cpu, BASE + 0x401, 1), 0x40)
+
+    def test_soft_disconnect_and_bus_reset_end_a_transfer_and_fast_forward_changes_nothing(self):
+        def script(fast_forward):
+            with self.device() as cpu:
+                cpu.fast_forward(fast_forward)
+                cpu.usb_attach()
+                cpu.run(DEBOUNCE + RESET + RECOVERY)
+                self.acknowledge(cpu)
+                self.configure(cpu, 3, rx=(3, 8, 64), tx=(3, 16, 64))
+                rows = []
+                first = cpu.usb_in(0x83, 8, wait=False)
+                second = cpu.usb_out(3, bytes(5), wait=False)             # queued behind the first
+                cpu.run(3 * FRAME)
+                self.load(cpu, 3, b"12345678", (4, 4))
+                self.put(cpu, BASE + 0x532, 1, 1)
+                rows.append(self.finished(cpu, first)); rows.append(self.finished(cpu, second))
+                third = cpu.usb_in(0x83, 8, wait=False)
+                cpu.run(FRAME)
+                self.put(cpu, BASE + 0x401, 0, 1)                         # SOFTCONN off under a transfer
+                rows.append(cpu.usb_result(third))
+                rows.append(cpu.usb_state()["port"])
+                self.put(cpu, BASE + 0x401, 0x40, 1)
+                cpu.run(DEBOUNCE + RESET + RECOVERY)
+                fourth = cpu.usb_in(0x83, 8, wait=False)
+                cpu.run(FRAME)
+                cpu.usb_reset()
+                rows.append(cpu.usb_result(fourth))
+                rows.append({name: value for name, value in cpu.usb_state().items() if name != "reserved_status"})
+                return rows
+        fast, slow = script(True), script(False)
+        self.assertEqual(fast, slow)
+        self.assertEqual([row["status"] for row in fast[:3]] + [fast[3], fast[4]["status"]],
+                         ["ok", "ok", "disconnected", "powered", "disconnected"])
+        self.assertEqual((fast[0]["data"], fast[1]["sent"], fast[5]["bus_resets"], fast[5]["port"]), (b"12345678", 5, 2, "reset"))
 
 
 if __name__ == "__main__":

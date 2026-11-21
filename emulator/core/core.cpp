@@ -2981,6 +2981,92 @@ int c6_usb_stats(void *handle, uint64_t *fields) {
         fields[3] = usb.interrupt_mask(); fields[4] = usb.interrupt_source(); fields[5] = usb.interrupts;
     });
 }
+int c6_usb_attach(void *handle, uint32_t attached) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.usb.attach(attached != 0, m->cycles); m->board.rescheduled();
+    });
+}
+int c6_usb_bus_reset(void *handle) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.usb.reset_bus(m->cycles); m->board.rescheduled();
+    });
+}
+int c6_usb_sof(void *handle, uint32_t enabled) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.usb.sof(enabled != 0, m->cycles); m->board.rescheduled();
+    });
+}
+int c6_usb_toggle_reset(void *handle, uint32_t endpoint) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.usb.toggle_reset(endpoint);
+    });
+}
+int c6_usb_submit(void *handle, uint32_t kind, uint32_t endpoint, const uint8_t *setup, const uint8_t *data, uint32_t size,
+                  uint32_t length, uint32_t max_packet, uint64_t timeout, uint32_t *id) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        if (kind > Usb::IN || size > 65535 || length > 65535) throw std::runtime_error("invalid USB transfer");
+        Usb::Transfer transfer;
+        transfer.kind = uint8_t(kind); transfer.endpoint = uint8_t(endpoint);
+        if (kind == Usb::CONTROL) std::copy(setup, setup + 8, transfer.setup.begin());
+        transfer.data.assign(data, data + size);
+        transfer.length = length; transfer.packet = max_packet;
+        *id = m->board.usb.submit(std::move(transfer), timeout, m->cycles); m->board.rescheduled();
+    });
+}
+int c6_usb_transfer(void *handle, uint32_t id, uint64_t *fields, uint8_t *data, uint32_t capacity) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        m->board.advance(m->cycles);
+        const Usb::Transfer *transfer = m->board.usb.find(id);
+        if (!transfer) throw std::runtime_error("unknown USB transfer (finished ones are kept until read, the latest 256)");
+        uint32_t copied = uint32_t(std::min<size_t>(capacity, transfer->data.size()));
+        std::copy(transfer->data.begin(), transfer->data.begin() + copied, data);
+        fields[0] = transfer->status; fields[2] = transfer->submitted;
+        fields[1] = transfer->naks + (transfer == &m->board.usb.peer().queue.front() ? m->board.usb.parked_naks(m->cycles) : 0);
+        fields[3] = transfer->completed; fields[4] = transfer->data.size(); fields[5] = copied; fields[6] = transfer->offset;
+        if (transfer->status != Usb::PENDING) m->board.usb.forget(id);
+    });
+}
+int c6_usb_run(void *handle, uint32_t id, uint64_t budget) {
+    auto m = static_cast<Machine *>(handle);
+    try {
+        while (budget && m->board.usb.pending(id)) {
+            uint64_t slice = std::min<uint64_t>(budget, 1024);
+            uint64_t before = m->cycles;
+            uint32_t status = m->run(slice);
+            if (status != C6_BUDGET) return int(status);
+            if (m->cycles == before) break;
+            budget -= std::min(budget, m->cycles - before);
+        }
+        return C6_BUDGET;
+    } catch (const std::exception &error) { m->error = error.what(); m->status = C6_FAULT; return C6_FAULT; }
+}
+int c6_usb_host_stats(void *handle, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.advance(m->cycles);
+        const auto &usb = m->board.usb; const auto &host = usb.peer();
+        fields[0] = uint64_t(host.port); fields[1] = host.vbus; fields[2] = host.address; fields[3] = host.configuration;
+        fields[4] = usb.function_address(); fields[5] = host.resets; fields[6] = host.sof; fields[7] = host.sofs;
+        fields[8] = host.frame; fields[9] = host.suspended; fields[10] = host.naks + usb.parked_naks(m->cycles); fields[11] = host.stalls;
+        fields[12] = host.errors; fields[13] = host.toggle_errors; fields[14] = host.transfers; fields[15] = host.queue.size();
+        fields[16] = usb.fifo_overflows; fields[17] = usb.fifo_underflows; fields[18] = usb.wrapper_control();
+        fields[19] = usb.connected();
+    });
+}
+int c6_usb_endpoint(void *handle, uint32_t number, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled || number < 1 || number > 4) throw std::runtime_error("USB0 has endpoints 1 to 4 besides endpoint 0");
+        const auto &e = m->board.usb.endpoint(number);
+        fields[0] = e.txmaxp; fields[1] = e.rxmaxp; fields[2] = e.txsz; fields[3] = e.rxsz; fields[4] = e.txadd; fields[5] = e.rxadd;
+        fields[6] = e.tx_packets; fields[7] = e.rx_packets; fields[8] = e.tx_stall; fields[9] = e.rx_stall;
+        fields[10] = e.txcsrh; fields[11] = e.rxcsrh;
+    });
+}
 int c6_usb_reserved_status_stats(void *handle, uint64_t *fields) {
     auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
         fields[0] = m->board.usb_reserved_count; fields[1] = m->board.usb_reserved_reads.size();

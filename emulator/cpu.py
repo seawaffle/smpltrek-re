@@ -12,10 +12,20 @@ READ, WRITE, EXECUTE = 1, 2, 4
 CYCLES_PER_SECOND = 372000000
 RET = 0xDEAD0000
 STATUSES = ("budget", "decode", "returned", "fault", "breakpoint")
+USB_FRAME_CYCLES = CYCLES_PER_SECOND // 1000
+USB_STATUSES = ("pending", "ok", "stall", "timeout", "disconnected", "error")
+USB_PORTS = ("detached", "powered", "debounce", "reset", "enabled")
 
 
 class CoreFault(RuntimeError):
     pass
+
+
+class UsbError(RuntimeError):
+    """A scripted USB transfer that had to succeed did not; `result` is what the host got."""
+    def __init__(self, message, result=None):
+        super().__init__(message)
+        self.result = result
 
 
 class CPU:
@@ -56,6 +66,16 @@ class CPU:
             "reserved_low_write": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64)]),
             "usb_stats": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint64)]),
             "usb_reserved_status_stats": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint64)]),
+            "usb_attach": (C.c_int, [C.c_void_p, C.c_uint32]),
+            "usb_bus_reset": (C.c_int, [C.c_void_p]),
+            "usb_sof": (C.c_int, [C.c_void_p, C.c_uint32]),
+            "usb_toggle_reset": (C.c_int, [C.c_void_p, C.c_uint32]),
+            "usb_submit": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32, C.c_void_p, C.c_void_p, C.c_uint32, C.c_uint32,
+                                     C.c_uint32, C.c_uint64, C.POINTER(C.c_uint32)]),
+            "usb_transfer": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64), C.c_void_p, C.c_uint32]),
+            "usb_run": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint64]),
+            "usb_host_stats": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint64)]),
+            "usb_endpoint": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64)]),
             "usb_reserved_status_read": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64)]),
             "gpio_input": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32, C.c_uint32]),
             "key_input": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32]),
@@ -110,6 +130,7 @@ class CPU:
         self.decoder = None
         self._state = State()
         self.regions = []
+        self.usb_ep0_packet, self.usb_packets, self.usb_interfaces, self.usb_setups = 64, {}, {}, {}
         self.artifacts = []
         self.decode_enabled = decode
 
@@ -412,12 +433,197 @@ class CPU:
         return dict(stores_dropped=fields[0], last_address=fields[1], last_pc=fields[2])
 
     def usb_state(self):
+        """USB0 and the scripted host on its cable. `address` and `configuration` are the host's view (what
+        SET_ADDRESS and SET_CONFIGURATION last succeeded with); `device_address` is the address the controller
+        answers to. `naks`, `stalls`, `errors` (no answer, or a packet that broke the protocol) and
+        `toggle_errors` (a packet dropped as a repeat because its DATA0/DATA1 did not alternate) count since
+        the board was enabled. Reading this changes nothing."""
         self.ensure_open()
         fields = (C.c_uint64 * 6)()
         self.checked(self.lib.c6_usb_stats(self.handle, fields))
-        return dict(profile="disconnected USB0 peripheral", cable_connected=False,
+        host = (C.c_uint64 * 20)()
+        self.checked(self.lib.c6_usb_host_stats(self.handle, host))
+        endpoints = []
+        for number in range(1, 5):
+            row = (C.c_uint64 * 12)()
+            self.checked(self.lib.c6_usb_endpoint(self.handle, number, row))
+            fifo = lambda size, address: dict(address=address * 8, packet=8 << (size & 15), packets=2 if size & 16 else 1)
+            endpoints.append(dict(number=number, tx_max_packet=row[0], rx_max_packet=row[1],
+                                  tx_fifo=fifo(row[2], row[4]), rx_fifo=fifo(row[3], row[5]),
+                                  tx_packets=row[6], rx_packets=row[7], tx_stall=bool(row[8]), rx_stall=bool(row[9]),
+                                  tx_iso=bool(row[10] & 0x40), rx_iso=bool(row[11] & 0x40)))
+        return dict(profile="USB0 peripheral with a scripted full-speed host", cable_connected=bool(host[1]),
                     reserved_status=self.usb_reserved_status_state(),
-                    **dict(zip(("soft_resets", "phy_ready", "soft_connect", "interrupt_mask", "interrupt_source", "interrupts"), fields)))
+                    **dict(zip(("soft_resets", "phy_ready", "soft_connect", "interrupt_mask", "interrupt_source", "interrupts"), fields)),
+                    port=USB_PORTS[host[0]], address=host[2], configuration=host[3], device_address=host[4],
+                    bus_resets=host[5], sof=bool(host[6]), sofs=host[7], frame=host[8], suspended=bool(host[9]),
+                    naks=host[10], stalls=host[11], errors=host[12], toggle_errors=host[13], transfers=host[14],
+                    queued=host[15], fifo_overflows=host[16], fifo_underflows=host[17],
+                    interrupt_mode="core registers (UINT = 1)" if host[18] & 8 else "wrapper (UINT = 0)",
+                    pull_up=bool(host[19]), endpoints=endpoints)
+
+    def usb_attach(self):
+        """Plug the cable into a full-speed host: VBUS now. Once the device's pull-up shows (SOFTCONN, with
+        the clock and PHY up) the host debounces for 100 ms, resets the bus for 10 ms and enables the port;
+        the first transfer starts 10 ms later. Transfers queued before that wait for it."""
+        self.ensure_open()
+        self.checked(self.lib.c6_usb_attach(self.handle, 1))
+
+    def usb_detach(self):
+        """Unplug: VBUS off, the session ends (DISCON), a transfer under way finishes as "disconnected"."""
+        self.ensure_open()
+        self.checked(self.lib.c6_usb_attach(self.handle, 0))
+
+    def usb_reset(self):
+        """Reset the bus of an enabled port again; the device is back at address 0, unconfigured."""
+        self.ensure_open()
+        self.checked(self.lib.c6_usb_bus_reset(self.handle))
+
+    def usb_sof(self, enabled=True):
+        """The host's start-of-frame, one every 1 ms (372,000 cycles) from the end of reset; on by default.
+        Off, the bus is idle between transfers and the device sees suspend 3 ms after the last activity,
+        then resume with the next packet."""
+        self.ensure_open()
+        self.checked(self.lib.c6_usb_sof(self.handle, bool(enabled)))
+
+    def usb_submit(self, kind, endpoint=0, setup=None, data=b"", length=0, max_packet=None, timeout_ms=1000):
+        """Queue a transfer ("control", "out" or "in") and return its id; the host runs queued transfers one
+        after another as the guest runs. usb_result reads it, usb_wait runs the guest until it has finished."""
+        self.ensure_open()
+        kinds = ("control", "out", "in")
+        if kind not in kinds or type(endpoint) is not int or not 0 <= endpoint <= 255:
+            raise ValueError('expected a transfer kind of "control", "out" or "in" and an endpoint address')
+        if type(timeout_ms) not in (int, float) or not 0 < timeout_ms <= 600000:
+            raise ValueError("timeout_ms must be above 0 and at most 600000")
+        if type(length) is not int or not 0 <= length <= 65535:
+            raise ValueError("an IN transfer reads 0 to 65535 bytes")
+        number = endpoint & 15
+        if kind != "control" and bool(endpoint & 0x80) != (kind == "in") and endpoint > 15:
+            raise ValueError("an endpoint address with bit 7 set is an IN endpoint")
+        if max_packet is None:
+            max_packet = self.usb_ep0_packet if kind == "control" else self.usb_packets.get(number | (0x80 if kind == "in" else 0), 64)
+        setup, data = bytes(setup or bytes(8)), bytes(data)
+        if len(setup) != 8:
+            raise ValueError("a SETUP packet is 8 bytes")
+        identity = C.c_uint32()
+        self.checked(self.lib.c6_usb_submit(self.handle, kinds.index(kind), number, C.create_string_buffer(setup, 8),
+                                            C.create_string_buffer(data, len(data) or 1), len(data), length, max_packet,
+                                            int(timeout_ms * USB_FRAME_CYCLES), C.byref(identity)))
+        self.usb_setups[identity.value] = setup if kind == "control" else None
+        return identity.value
+
+    def usb_result(self, transfer):
+        """A transfer's outcome: `status` is "pending", "ok", "stall", "timeout", "disconnected" (unplugged,
+        pull-up dropped or bus reset under way) or "error" (no answer, or a packet that broke the protocol);
+        `data` is what an IN transfer or a read request returned, `sent` how many OUT bytes were
+        acknowledged, `naks` how often the device answered NAK, `submitted` and `completed` guest cycles.
+        A finished transfer can be read once."""
+        self.ensure_open()
+        fields, data = (C.c_uint64 * 7)(), (C.c_ubyte * 65536)()
+        self.checked(self.lib.c6_usb_transfer(self.handle, transfer, fields, data, 65536))
+        status = USB_STATUSES[fields[0]]
+        result = dict(id=transfer, status=status, data=bytes(data[:fields[5]]), naks=fields[1], submitted=fields[2],
+                      completed=fields[3] if status != "pending" else None, sent=fields[6])
+        if status != "pending":
+            setup = self.usb_setups.pop(transfer, None)
+            if setup and status == "ok" and setup[0] == 0x01 and setup[1] == 11:   # SET_INTERFACE: toggles restart
+                for address in self.usb_interfaces.get(setup[4], ()):
+                    self.checked(self.lib.c6_usb_toggle_reset(self.handle, address))
+        return result
+
+    def usb_wait(self, transfer):
+        """Run the guest until the transfer has finished (by its timeout at the latest; the guest stops within
+        1,024 cycles of that) and return usb_result. If the run stops for another reason first, such as a
+        breakpoint, the result is still "pending"."""
+        self.ensure_open()
+        self._run(self.cycles() + 601000 * USB_FRAME_CYCLES,
+                  lambda remaining: self.lib.c6_usb_run(self.handle, transfer, remaining))
+        return self.usb_result(transfer)
+
+    def usb_control(self, setup, data_or_length=None, timeout_ms=1000, wait=True, max_packet=None):
+        """A control transfer: SETUP, the data stage if wLength is not 0, then the status stage. `setup` is the
+        8 bytes, or (bmRequestType, bRequest, wValue, wIndex) with wLength taken from `data_or_length`: the
+        bytes of a write request, or how many to read. Returns usb_result (a "stall" in any stage ends it),
+        or the transfer's id with wait=False."""
+        if not isinstance(setup, (bytes, bytearray)):
+            kind, request, value, index = setup
+            size = data_or_length if type(data_or_length) is int else len(data_or_length or b"")
+            setup = struct.pack("<BBHHH", kind, request, value, index, size)
+        setup = bytes(setup)
+        if len(setup) != 8:
+            raise ValueError("a SETUP packet is 8 bytes")
+        wanted = setup[6] | setup[7] << 8
+        if setup[0] & 0x80:
+            if data_or_length not in (None, wanted):
+                raise ValueError("a read request returns wLength bytes")
+            data = b""
+        else:
+            data = b"" if data_or_length in (None, 0) else bytes(data_or_length)
+            if len(data) != wanted:
+                raise ValueError("a write request sends wLength bytes")
+        transfer = self.usb_submit("control", 0, setup, data, 0, max_packet, timeout_ms)
+        return self.usb_wait(transfer) if wait else transfer
+
+    def usb_out(self, endpoint, data, timeout_ms=1000, wait=True, max_packet=None):
+        """Send `data` to a bulk or interrupt OUT endpoint in packets of its maximum size (from the
+        descriptors usb_enumerate read, else 64); the host retries while the device answers NAK."""
+        transfer = self.usb_submit("out", endpoint, None, data, 0, max_packet, timeout_ms)
+        return self.usb_wait(transfer) if wait else transfer
+
+    def usb_in(self, endpoint, max_length, timeout_ms=1000, wait=True, max_packet=None):
+        """Read from a bulk or interrupt IN endpoint until `max_length` bytes or a short packet; the host
+        polls back to back while the device answers NAK, and gives up with "timeout" after timeout_ms."""
+        transfer = self.usb_submit("in", endpoint | 0x80, None, b"", max_length, max_packet, timeout_ms)
+        return self.usb_wait(transfer) if wait else transfer
+
+    def usb_enumerate(self, address=1, configuration=None, timeout_ms=1000):
+        """Enumerate as a host does: wait for the port (attach first), read 8 bytes of the device descriptor,
+        SET_ADDRESS, read the device descriptor and the whole configuration descriptor, SET_CONFIGURATION
+        (the descriptor's value unless given). Later transfers use the packet sizes found. Raises UsbError
+        if a step does not succeed; `timeout_ms` applies to each step."""
+        self.ensure_open()
+        if not self.usb_state()["cable_connected"]:
+            raise UsbError("the USB cable is not attached")
+        end = self.cycles() + int(timeout_ms * USB_FRAME_CYCLES)
+        while self.usb_state()["port"] != "enabled":
+            if self.cycles() >= end:
+                raise UsbError(f'the USB port did not come up within {timeout_ms} ms (port {self.usb_state()["port"]})')
+            self.run(min(USB_FRAME_CYCLES, end - self.cycles()))
+        self.usb_ep0_packet, self.usb_packets, self.usb_interfaces = 8, {}, {}
+        steps = []
+
+        def control(name, setup, size=None):
+            result = self.usb_control(setup, size, timeout_ms)
+            steps.append(dict(result, step=name))
+            if result["status"] != "ok" or (size and len(result["data"]) < min(size, 8)):
+                raise UsbError(f'USB enumeration: {name} ended as {result["status"]} with {len(result["data"])} bytes', result)
+            return result["data"]
+
+        self.usb_ep0_packet = control("device descriptor, 8 bytes", (0x80, 6, 0x0100, 0), 8)[7]
+        if self.usb_ep0_packet not in (8, 16, 32, 64):
+            raise UsbError(f"USB enumeration: bMaxPacketSize0 is {self.usb_ep0_packet}")
+        control("set address", (0x00, 5, address, 0))
+        device = control("device descriptor", (0x80, 6, 0x0100, 0), 18)
+        total = struct.unpack_from("<H", control("configuration descriptor, 9 bytes", (0x80, 6, 0x0200, 0), 9), 2)[0]
+        descriptor = control("configuration descriptor", (0x80, 6, 0x0200, 0), total)
+        endpoints, interface, at = [], None, 0
+        while at + 2 <= len(descriptor) and descriptor[at]:
+            size, kind = descriptor[at], descriptor[at + 1]
+            if kind == 4 and size >= 9:
+                interface = descriptor[at + 2]
+            elif kind == 5 and size >= 7:
+                number, attributes, packet = descriptor[at + 2], descriptor[at + 3], struct.unpack_from("<H", descriptor, at + 4)[0]
+                endpoints.append(dict(address=number, interface=interface, max_packet=packet & 0x7ff,
+                                      type=("control", "isochronous", "bulk", "interrupt")[attributes & 3]))
+                if attributes & 3 in (2, 3):
+                    self.usb_packets[number] = min(packet & 0x7ff, 64)
+                    self.usb_interfaces.setdefault(interface, []).append(number)
+            at += size
+        value = descriptor[5] if configuration is None else configuration
+        control("set configuration", (0x00, 9, value, 0))
+        return dict(device=device, configuration=descriptor, vendor=struct.unpack_from("<H", device, 8)[0],
+                    product=struct.unpack_from("<H", device, 10)[0], address=address, configuration_value=value,
+                    max_packet0=self.usb_ep0_packet, endpoints=endpoints, steps=steps)
 
     def usb_reserved_status_state(self):
         self.ensure_open()
@@ -668,10 +874,12 @@ class CPU:
         self.ensure_open()
         if type(cycles) is not int or not 0 <= cycles <= 1000000000:
             raise ValueError("cycle budget must be an integer from 0 to 1000000000")
-        end = self.cycles() + cycles
+        return self._run(self.cycles() + cycles, lambda remaining: self.lib.c6_run(self.handle, remaining))
+
+    def _run(self, end, call):
         while True:
             remaining = end - self.cycles()
-            status = self.lib.c6_run(self.handle, remaining)
+            status = call(remaining)
             state = self.state()
             if status == 3:
                 detail = self.decoder.text.get(state["fault_address"], "") if self.decoder else ""
