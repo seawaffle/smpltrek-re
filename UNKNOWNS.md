@@ -249,7 +249,8 @@ Mapped in `docs/06-audio-engine.md`, claims AUD-1..AUD-12 (2026-11-17).
 - Lofi-12 XT's own boot clocks (UART and tick would skew on a cross-flash if they differ). B (another unit's dump)
 - CyDrums 2.0.97: which input-selector index each sampling label (MIC HIZ DYN LINE USB) passes; its start-up apply
   branch on +0x10. Lofi's input status words 2 and 3. `01-platform-map.md` "Hardware use per product". S, Sim
-- Session C3's unreported checklist rows; sessions C4 (its app writes flash) and C5 (no image built), planned, not run.
+- Session C3's unreported checklist rows; session C4 (its app writes flash), planned, not run; session C5's
+  unreported rows (NO CARD page, SYSTEM MENU over the start-up pages, settings values under CyDrums).
 
 ### Other Sonicware products (F)
 - Seeds that rest on one release: MINIMAL, Bass&Beats, Mega Synthesis, Ambient Ø. INT-4.

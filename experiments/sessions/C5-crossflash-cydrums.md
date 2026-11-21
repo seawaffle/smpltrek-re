@@ -1,8 +1,16 @@
-# Session C5: sterilised CyDrums 1.1.84 on the SmplTrek, then back (planned 2026-11-12, not run)
+# Session C5: sterilised CyDrums 1.1.84 on the SmplTrek, then back (planned 2026-11-12, run 2026-11-20)
 
-> **Not run.** A plan only: no test file is built, and the unit has never run it.
+> **Run 2026-11-20: passed, with deviations from the plan.** The CyDrums app was written, booted and ran,
+> including with its own card content (not part of the plan); BOOT MODE was reached with it installed; stock
+> 3.2.174 restored; SmplTrek settings unchanged. Operator report only: no photographs or film are recorded.
 >
-> **Results:** none.
+> **Results:** "Results" at the end of this file. The plan below is kept as written before the run.
+
+**Test file** (built 2026-11-20): SHA-256 `da1b34acc92fbb80bb55ca6fde418ae00f708f96902e8883daa0bae6399f2f44`,
+2,271,021 bytes, built locally from the specification with a scratch script on the repo's `sonicware_integrity`
+and `patch_builder` modules (not in the repository; there is still no CyDrums builder here).
+`check_sterilised_cydrums.py ... --decode` printed PASS: 13 bytes differ from the official file (entry
+`0xACBF8`, family word, both CRCs; cmtd CRC `9fe3bb92`, mmtd CRC `0770811f`).
 
 **Purpose.** Second foreign app on the unit, after Lofi-12 XT in C3. Does the CyDrums app boot and draw on SmplTrek
 hardware, and does HOME + power still recover the unit? CyDrums differs from Lofi in one way that shapes this
@@ -104,8 +112,35 @@ it writes to its card in normal use (configs, projects, `filedb.bin`). That is a
   key press help, but cannot separate the two.
 - Pads, audio and LEDs are barely exercised: without its card CyDrums offers no playable screen.
 
-## Results (filled in during/after)
+## Results (run 2026-11-20; operator report, given 2026-11-21)
+
+Everything here is what the operator reported afterwards. No photographs or film are recorded, and steps not listed
+were not reported.
+
+**Deviations from the plan.**
+- The card holding the test image stayed in for the first CyDrums boot (the plan removes card A at step 4 and its
+  stop rules keep it out while CyDrums runs). So the first page seen was BLANK MEDIA, not NO CARD.
+- The unit was then switched off, the CyDrums folder was copied onto that same card on a computer, and CyDrums was
+  booted with it. The plan excluded a prepared card ("a separate decision"). CyDrums writes to its card in normal
+  use; what it wrote to this one was not examined.
 
 | # | Observed | Matches expectation? | Evidence |
 |---|---|---|---|
-| | | | |
+| 1 | not reported | | |
+| 2 | Confirmation read `V3.2.174 -> V1.1.84` | yes | operator report |
+| 3 | Update completed (implied by the boot that followed; end screen not reported) | yes | operator report |
+| 4 | With the card that held only the test image in: the "download files" page (BLANK MEDIA / DOWNLOAD FILES FROM THE WEB) | yes, for a card without `/CyDrums` (XF-16); NO CARD not observed | operator report |
+| 5 | SYSTEM MENU over the start-up pages: not reported | | |
+| 6, 7 | On the start-up page: not reported | | |
+| extra | After copying the CyDrums folder to the card: CyDrums ran. Audio playback and editing worked; "nothing odd" apart from the button mapping, which is very different from the SmplTrek's labels | not predicted (outside the plan) | operator report |
+| 8 | BOOT MODE reached with CyDrums installed | yes | operator report (implied by step 9) |
+| 9 | SYSTEM DIAG "all expected results"; 3.2.174 restored | yes | operator report |
+| 10 | Stock 3.2.174 runs; settings "fine after recovery" | yes | operator report |
+
+**What this establishes (device, one unit, operator report).** A sterilised CyDrums 1.1.84 image is accepted,
+written and booted by BOOT 1.0.17 on a SmplTrek; it runs with its card content, with working audio playback and
+editing; HOME + power still reaches BOOT MODE; the stock restore works and SmplTrek's settings survive.
+
+**Not established.** The NO CARD page; whether func + system opens SYSTEM MENU over the start-up pages; the
+predicted settings values under CyDrums (XF-17); pad feel, LEDs, inputs and sampling in any detail; what CyDrums
+wrote to the card; anything about CyDrums 2.0.97 beta, which has not run on a unit.

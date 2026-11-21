@@ -38,6 +38,7 @@ the confirmation screen reached, then CLR pressed: nothing written.
 | A4 rev. 2 | 2026-11-11 | the dump probe with device selection | two identical 32 MiB dumps; then 3.2.174 restored | [A4](#revision-2-built-and-run-2026-11-11) |
 | D1-downgrade | 2026-11-11 | official 3.0.148 over 3.2.174, then 3.2.174 back | passed: older SYSTEM written, boots, DIAG OK; upgrade back works | [sessions/D1-downgrade.md](sessions/D1-downgrade.md) |
 | C3 | 2026-11-11 | Lofi-12 XT 1.5.205 with its settings writer stubbed, as family 5, then 3.2.174 back | passed: foreign app written, boots, runs; BOOT MODE reached; settings unchanged | [sessions/C3-crossflash.md](sessions/C3-crossflash.md) |
+| C5 | 2026-11-20 | CyDrums 1.1.84 with its settings writer stubbed, as family 5, then 3.2.174 back | passed, with deviations (test card left in; then run with the CyDrums folder on it): foreign app written, boots, runs with audio; BOOT MODE reached; settings unchanged. Operator report, no photographs | [sessions/C5-crossflash-cydrums.md](sessions/C5-crossflash-cydrums.md) |
 | D0 | 2026-11-12 | a SYSTEM image that branches to itself, then 3.2.174 back | passed: HOME + power reaches BOOT MODE with an app that never runs | [sessions/D0-hang-recovery.md](sessions/D0-hang-recovery.md) |
 | D1 run 1 | 2026-11-13 | bare-metal image 0.2.3 | hung on the logo before its first frame; stock restored | [sessions/D1-hello.md](sessions/D1-hello.md) |
 | D1 run 2 | 2026-11-13 | 0.2.4 | switched itself off, fault 3: SPI1 never transferred (SPIPC0 unwritten) | [sessions/D1-hello.md](sessions/D1-hello.md) |
@@ -51,7 +52,7 @@ the confirmation screen reached, then CLR pressed: nothing written.
 | M3 | 2026-11-19 | diagnostic image 0.3.4: per-path held load data, interrupt timing, reciprocal input bits, pad hit shape | views SIDE, NOP2, RCP2 and PADR B run; results recorded in `emulator/README.md`; stock part K and the end state not reported | [sessions/M3-bench.md](sessions/M3-bench.md) |
 
 Planned, not run: C4 (Lofi-12 XT with relocated settings, [sessions/C4-relocated-lofi.md](sessions/C4-relocated-lofi.md)),
-C5 (sterilised CyDrums, [sessions/C5-crossflash-cydrums.md](sessions/C5-crossflash-cydrums.md)), L1 (LED map,
+L1 (LED map,
 [sessions/L1-led-map.md](sessions/L1-led-map.md); folded into M1 part F, not run), D3-audio-pins (outputs on the stock
 firmware, [sessions/D3-audio-pins-plan.md](sessions/D3-audio-pins-plan.md); folded into M1 part H, not run). Session D3
 ([sessions/D3-audio.md](sessions/D3-audio.md)) ran as M1 part A.

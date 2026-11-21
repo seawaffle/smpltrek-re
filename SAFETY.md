@@ -2,7 +2,7 @@
 
 How updates, boot and recovery work, and what each kind of change risks. Every claim gives its evidence level:
 - **device**: observed on the unit in a recorded device session. Session codes cited here (C1, C2, A2a, A2b, A3, W1,
-  S2, A4, C3, D0, D1, M1, M2, M3) are among the runs in the session table of
+  S2, A4, C3, C5, D0, D1, M1, M2, M3) are among the runs in the session table of
   [experiments/README.md](experiments/README.md), which also lists runs 1 and 2, the USB and Step 1 checks, and the
   planned sessions; per-session files are in [experiments/sessions/](experiments/sessions);
 - **static**: read from the code, not tested;
@@ -25,7 +25,7 @@ as unverified for that unit.
 | Flash a file whose outer CRC is right but whose inner (mmtd) CRC is wrong | old SYSTEM erased, new one fails "Verifying", app won't start | HOME + power, flash an official file | static (INT-7); device only up to the confirmation screen (C2, CLR pressed) |
 | Power lost or card pulled during a SYSTEM update | the same as the row above | HOME + power, flash an official file | static |
 | Custom code hooked to a UI action that crashes or hangs | app hangs after a normal boot | power cycle | device (S2, A4 probes) |
-| A foreign SYSTEM image that boots (sterilised Lofi-12 XT) | a different app runs; some settings read differently | HOME + power, flash an official file | device (C3, 2026-11-11) |
+| A foreign SYSTEM image that boots (sterilised Lofi-12 XT, sterilised CyDrums 1.1.84) | a different app runs; some settings read differently | HOME + power, flash an official file | device (C3, 2026-11-11; C5, 2026-11-20, operator report) |
 | A SYSTEM image that hangs at boot | unit stays on, frozen on the bootloader's SONICWARE logo, power key dead | remove the supply (adapter, no batteries), then HOME + power, flash an official file | device (D0, 2026-11-12) |
 | A bare-metal test image (no Sonicware code) installed as SYSTEM | it runs, hangs or switches the unit off | HOME + power, flash an official file | device (D1 runs 1 to 7, 2026-11-13/14; M1 2026-11-16; M2 2026-11-18) |
 | A file with a BOOT, MCU or MCU Boot section | could replace the bootloader or the panel MCU firmware; a bad one could make the unit unrecoverable by software | possibly none without hardware tools | static; never done in any session here |

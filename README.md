@@ -20,8 +20,10 @@ three products. **The Lofi-12 XT 1.5.205 firmware has installed, booted and run 
 [experiments/sessions/C3-crossflash.md](experiments/sessions/C3-crossflash.md)),
 rewrapped this way with its settings writer disabled first
 ([tools/patches/sterilise_lofi.py](tools/patches/sterilise_lofi.py)) so it could not write over the SmplTrek's
-own settings blocks; the unit was then restored to stock. The other directions are built and checked offline
-but have not run on a unit.
+own settings blocks; the unit was then restored to stock. **CyDrums 1.1.84, sterilised the same way, has also run on
+a SmplTrek**, with its card content and working audio (device session C5, 2026-11-20, operator report,
+[experiments/sessions/C5-crossflash-cydrums.md](experiments/sessions/C5-crossflash-cydrums.md)). CyDrums 2.0.97 beta
+and the directions onto a Lofi-12 XT or a CyDrums are checked offline but have not run on a unit.
 
 ## Start here
 
@@ -97,7 +99,7 @@ The analysis suite takes about 20 minutes with everything present; the emulator 
 Proven on one unit (BOOT 1.0.17, MCU 1.0.6): official updates of any version, including downgrades, install
 and restore; resealed modified system images are accepted and run; a system image that never boots is
 recovered with HOME + power, which enters BOOT MODE and installs an official file from the card;
-a Lofi-12 XT system image rewrapped for the SmplTrek installs, boots and restores. Nothing here writes the
+a Lofi-12 XT system image rewrapped for the SmplTrek installs, boots and restores, and so does a CyDrums 1.1.84 one (C5). Nothing here writes the
 bootloader, and no recovery path is known if the bootloader itself is damaged. Other production runs may
 ship a different bootloader. [SAFETY.md](SAFETY.md) gives the evidence and the limits of each claim.
 

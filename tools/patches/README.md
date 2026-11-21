@@ -120,7 +120,7 @@ fit". Check every built image by disassembly (`analysis/mmtd2elf.py`, then `tic6
 diffed against `work/lofi-1.5.205.dis`) before it goes on a card; the hashes, preconditions and result
 are in `experiments/README.md`, "C3 sterilised Lofi-12 XT image".
 
-## Checking a sterilised CyDrums 1.1.84 image (`check_sterilised_cydrums.py`, session C5, planned, not run)
+## Checking a sterilised CyDrums 1.1.84 image (`check_sterilised_cydrums.py`, session C5, run 2026-11-20)
 
 Read-only; there is no CyDrums builder here. `check_sterilised_cydrums.py <official CyDrums_v1.1.84 .zip|.bin>
 <candidate.bin> [--decode]` checks a locally built image against `docs/01-platform-map.md`, "The same patch fits

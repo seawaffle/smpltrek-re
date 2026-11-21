@@ -851,8 +851,8 @@ manual. None of them was resolved to a CyDrums page accessor.
 - AUTO POWER OFF (+0x104): the manual offers Off and 30 min to 6 h; [0,4] as in Lofi, so 4 = 6 h by analogy
   with Lofi's device result.
 
-**What a sterilised CyDrums would show** (simulated, reading SmplTrek's A4 block; no CyDrums image has run on the
-unit, session C5 is planned only, `experiments/sessions/C5-crossflash-cydrums.md`; the unit's settings may have
+**What a sterilised CyDrums would show** (simulated, reading SmplTrek's A4 block; session C5 ran CyDrums 1.1.84 on the
+unit on 2026-11-20 but these values were not reported, `experiments/sessions/C5-crossflash-cydrums.md`; the unit's settings may have
 changed since):
 
 | Setting (label source) | Word | Value read | CyDrums default | Note |
@@ -985,7 +985,8 @@ unit in C3 and left SmplTrek's settings unchanged.
 - What it reads at boot is in "CyDrums reading SmplTrek's settings" above.
 - What it needs on the card is in "CyDrums start-up and the card": with no card it stops at "NO CARD".
 
-Not built (session C5, planned only). `tools/patches/check_sterilised_cydrums.py` checks a locally built image
+Built locally and run on the unit in session C5 (2026-11-20; image SHA-256 `da1b34ac…6399f2f44`; it booted and ran,
+results in the session file). `tools/patches/check_sterilised_cydrums.py` checks a locally built image
 against this list (read-only; tests in `tools/patches/test_check_sterilised_cydrums.py`, candidates made in memory
 only). There is no CyDrums builder.
 

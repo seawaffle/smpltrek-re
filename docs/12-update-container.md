@@ -211,8 +211,8 @@ the family word at `0x10`, the `mmtd` CRC with the target's `mmtd` seed, and the
 `cmtd` seed, in that order. It asserts that no other byte changed and that the result verifies, and refuses
 content-bundled files (a foreign `pmtd` would write the target's content partitions), files that fail
 verification, and already-converted files. The SmplTrek direction is the transformation the bootloader accepted
-in W1 (`tools/test_palette_swap.py` reproduces that artifact byte for byte); the Lofi-12 XT and CyDrums
-directions have not run on a unit.
+in W1 (`tools/test_palette_swap.py` reproduces that artifact byte for byte); a CyDrums 1.1.84 image sealed
+for the SmplTrek (and sterilised) ran in C5 (2026-11-20). Files sealed for a Lofi-12 XT or a CyDrums have not run on a unit.
 
 ## Validation corpus
 
