@@ -147,6 +147,12 @@ class Stock:
         self.cpu.uart_receive(index, data)
         self.inputs.append(dict(cycles=self.cpu.state()["cycles"], type="uart_rx", uart=index, bytes=list(data)))
 
+    def midi_in(self, data):
+        """Bytes from a sender on the MIDI IN jack, paced a character time apart (cpu.midi_in)."""
+        data = bytes(data)
+        self.cpu.midi_in(data)
+        self.inputs.append(dict(cycles=self.cpu.state()["cycles"], type="midi_in", bytes=list(data)))
+
     def panel_level(self, channel, value):
         """Level the panel stream reports for a channel from now on (0-14 pads, 15 battery)."""
         self.cpu.panel_level(channel, value)

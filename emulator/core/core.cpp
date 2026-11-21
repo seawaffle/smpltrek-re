@@ -3232,6 +3232,61 @@ int c6_uart_sent(void *handle, uint32_t index, uint64_t since, uint8_t *data, ui
         fields[0] = sent.count; fields[1] = copied;
     });
 }
+int c6_uart_sent_cycles(void *handle, uint32_t index, uint64_t since, uint64_t *cycles, uint32_t capacity, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        if (!m->board.enabled || index >= m->board.uart_sent.size()) throw std::runtime_error("invalid UART index");
+        const auto &sent = m->board.uart_sent[index];
+        uint64_t first = std::max(since, sent.count > sent.cycles.size() ? sent.count - sent.cycles.size() : 0);
+        uint64_t copied = 0;
+        for (uint64_t at = first; at < sent.count && copied < capacity; at++) cycles[copied++] = sent.cycles[at % sent.cycles.size()];
+        fields[0] = sent.count; fields[1] = copied;
+    });
+}
+int c6_midi_in(void *handle, const uint8_t *data, uint32_t size) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] { m->board.midi_in(data, size, m->cycles); });
+}
+int c6_midi_loopback(void *handle, uint32_t enabled) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] { m->board.midi_loopback(enabled != 0); });
+}
+int c6_midi_stats(void *handle, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("MIDI IN needs the board");
+        const auto &midi = m->board.midi; auto state = m->board.midi_state();
+        fields[0] = midi.queue.size(); fields[1] = midi.delivered; fields[2] = midi.ignored; fields[3] = midi.looped;
+        fields[4] = midi.loopback; fields[5] = midi.queue.empty() ? 0 : midi.next;
+        fields[6] = state.character_cycles; fields[7] = state.fifo; fields[8] = state.overruns; fields[9] = state.line_errors;
+    });
+}
+int c6_gpio_schedule(void *handle, uint32_t bank, uint32_t pin, uint32_t high, uint64_t cycle) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] { m->board.gpio_schedule(bank, pin, high != 0, cycle, m->cycles); });
+}
+int c6_gpio_schedule_clear(void *handle, uint32_t bank, uint32_t pin) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] { m->board.gpio_schedule_clear(bank, pin); });
+}
+int c6_gpio_watch(void *handle, uint32_t bank, uint32_t pin, uint32_t enabled) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] { m->board.gpio_watch(bank, pin, enabled != 0, m->cycles); });
+}
+int c6_gpio_trace(void *handle, uint64_t since, uint64_t *rows, uint32_t capacity, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the GPIO trace needs the board");
+        const auto &trace = m->board.gpio_trace;
+        uint64_t first = std::max(since, trace.count > trace.rows.size() ? trace.count - trace.rows.size() : 0);
+        uint64_t copied = 0;
+        for (uint64_t at = first; at < trace.count && copied < capacity; at++, copied++) {
+            const auto &row = trace.rows[at % trace.rows.size()];
+            rows[copied * 2] = row.cycle; rows[copied * 2 + 1] = uint64_t(row.bank) << 16 | row.pin << 8 | row.high;
+        }
+        fields[0] = trace.count; fields[1] = copied; fields[2] = m->board.gpio_scheduled.size();
+    });
+}
 int c6_oled_frame(void *handle, uint8_t *data, uint64_t *bytes, uint32_t *fields) {
     auto m = static_cast<Machine *>(handle);
     return guarded(m, [&] {

@@ -2,6 +2,7 @@
 #define SMPLTREK_EMULATOR_BOARD_H
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <unordered_map>
 #include <vector>
 #include "edma.h"
@@ -50,6 +51,10 @@ class Board {
     void reserved_guard() const;
     uint32_t gpio_levels(unsigned pair) const;
     void gpio_edges(unsigned pair, uint32_t previous);
+    struct Driven { uint32_t outputs, levels; };
+    Driven gpio_driven(unsigned pair) const;
+    void gpio_record(unsigned pair, Driven previous, uint64_t cycle);
+    uint64_t midi_character() const;
     uint64_t keys_down = 0;
     bool device(uint32_t address, uint32_t size) const;
 public:
@@ -96,10 +101,45 @@ public:
     } panel;
     void panel_stream(bool enabled, uint64_t cycle);
     void panel_level(unsigned channel, uint32_t value);
-    // Bytes each UART has finished transmitting, most recent 4096 retained. Observation
-    // only: the peer stays silent.
-    struct UartSent { std::array<uint8_t, 4096> bytes{}; uint64_t count = 0; };
+    // Bytes each UART has finished transmitting and the cycle each one's last stop bit ended at, most
+    // recent 4096 retained. Observation only: the peer stays silent, unless MIDI OUT is cabled to MIDI IN.
+    struct UartSent { std::array<uint8_t, 4096> bytes{}; std::array<uint64_t, 4096> cycles{}; uint64_t count = 0; };
     std::array<UartSent, 3> uart_sent;
+    // Optional peer on UART0: a sender on the MIDI IN jack. Queued bytes arrive back to back, one per
+    // character time of the format and divisor the guest programmed (119,040 cycles, the 31,250 baud 8N1
+    // of MIDI, while it has programmed none), the first starting at the cycle it was queued in an idle
+    // line. A real sender keeps its own 31,250 baud whatever the guest programmed, and a mismatch would
+    // show as framing errors, which this peer never produces. `loopback` is a cable from MIDI OUT to MIDI
+    // IN instead: each byte UART0 finishes transmitting is received at that same cycle (no opto-isolator
+    // delay). uart_receive stays the unpaced path.
+    struct MidiIn {
+        static constexpr uint64_t CHARACTER_CYCLES = 119040; // 372 MHz * 10 bits / 31,250 baud
+        static constexpr size_t CAPACITY = 1 << 20;
+        std::deque<uint8_t> queue;
+        uint64_t next = UINT64_MAX;          // when the byte at the front has fully arrived
+        uint64_t delivered = 0, ignored = 0; // ignored: the guest held its receiver in reset
+        uint64_t looped = 0;
+        bool loopback = false;
+    } midi;
+    void midi_in(const uint8_t *data, size_t size, uint64_t cycle);
+    void midi_loopback(bool on);
+    struct MidiState { uint64_t character_cycles, fifo, overruns, line_errors; };
+    MidiState midi_state() const { return {midi_character(), uart[0].received(), uart[0].overruns, uart[0].line_status_errors()}; }
+    // External pin levels to apply at given cycles, as gpio_input would then: SYNC IN edges on GP7[8].
+    struct GpioEdge { uint64_t cycle; uint8_t bank, pin; bool high; };
+    std::deque<GpioEdge> gpio_scheduled; // in cycle order; edges of one cycle in the order given
+    void gpio_schedule(unsigned bank, unsigned pin, bool high, uint64_t cycle, uint64_t now);
+    void gpio_schedule_clear(unsigned bank, unsigned pin);
+    // Level changes of watched output pins, most recent 4096 retained: SYNC OUT on GP7[9] to begin with.
+    // A pin's first row is the level it drives when it becomes an output. Of the pin mux only GP7[9]'s
+    // (PINMUX17 nibble 0 = 8) is checked; any other watched pin counts as driven whenever it is an output.
+    struct GpioChange { uint64_t cycle; uint8_t bank, pin; bool high; };
+    struct GpioTrace {
+        std::array<uint32_t, 5> watch{};
+        std::array<GpioChange, 4096> rows{};
+        uint64_t count = 0;
+    } gpio_trace;
+    void gpio_watch(unsigned bank, unsigned pin, bool on, uint64_t cycle);
     std::function<void(uint32_t, uint32_t, uint32_t)> dma_copy;
     Oled oled;
     std::array<Nor, 2> flash;

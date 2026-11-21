@@ -36,6 +36,13 @@
         <p id="clock" class="hint">0.0 s guest</p>
         <label class="row check"><input id="swap" type="checkbox"> Swap left and right</label>
       </details>
+      <details class="card" open>
+        <summary>MIDI</summary>
+        <div class="actions"><button id="midi">Connect MIDI devices</button></div>
+        <p id="midi-ports" class="hint">Off. Connected, every MIDI input of this browser plays the MIDI IN jack and the MIDI OUT jack goes to every MIDI output.</p>
+        <div class="metrics"><span>In <strong id="midi-in">0</strong></span><span>Out <strong id="midi-out">0</strong></span><span>Overruns <strong id="midi-overruns">0</strong></span></div>
+        <p class="hint">Bytes reach the firmware one character time apart (31,250 baud), in guest time. Output leaves when the page receives it, a few milliseconds late and unevenly: measure clock timing with <code>uart_sent</code>, not here.</p>
+      </details>
       <details class="card">
         <summary>Keyboard</summary>
         <p class="hint keys-help">Arrows move · Enter OK · Backspace CLR · function keys by position: F F1 · R F2 · P F3 · H F4 · Space F5 · S F6 · M F7 · E F8 · 1–8 steps, with Shift 9–16 · pads Z X C V B / A D G J K / Q W T Y U are PAD 0 to 14 · [ ] VALUE</p>

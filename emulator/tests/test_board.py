@@ -1301,6 +1301,267 @@ class Board(unittest.TestCase):
                 results.append((cpu.state()["cycles"], cpu.panel_stream_state()))
         self.assertEqual(results[0], results[1])
 
+    def configure_midi(self, cpu, interrupts=0):
+        # The stock MIDI set-up (docs/04-hardware-access.md, "MIDI DIN on UART0"): 31,250 baud 8N1.
+        self.enable_module(cpu, 0x01c10000, 9)
+        base = 0x01c42000
+        self.put(cpu, 0x01c1412c, 0x00220000)  # PINMUX3: UART0 RXD, TXD
+        self.put(cpu, base + 0x34, 0)
+        self.put(cpu, base + 0x20, 0x74)
+        self.put(cpu, base + 0x24, 1)
+        self.put(cpu, base + 0xc, 3)
+        self.put(cpu, base + 8, 7)
+        self.put(cpu, base + 8, 1)
+        self.put(cpu, base + 4, interrupts)
+        self.put(cpu, base + 0x30, 0x6001)
+        return base
+
+    def test_midi_in_delivers_one_byte_a_character_time_where_uart_receive_overruns(self):
+        CHARACTER = 119040  # 10 bits at 31,250 baud, in 372 MHz cycles
+        results = []
+        for slice_cycles in (997, 1000000):
+            with self.machine() as cpu:
+                def run(cycles):
+                    while cycles:
+                        part = min(cycles, slice_cycles); cpu.run(part); cycles -= part
+                self.assertEqual(cpu.midi_state()["character_cycles"], CHARACTER)  # nothing programmed yet
+                cpu.midi_in(b"\x90\x3c\x7f")   # the receiver is still in reset: lost, a character time apart
+                run(3 * CHARACTER)
+                state = cpu.midi_state()
+                self.assertEqual((state["queued"], state["delivered"], state["ignored"], state["next_cycle"]), (0, 0, 3, None))
+                base = self.configure_midi(cpu, interrupts=5)
+                self.put(cpu, 0x01800104, 38)  # UART0 -> CPU interrupt 4
+                self.assertEqual(cpu.midi_state()["character_cycles"], CHARACTER)
+                dump = bytes([0xf0, *(value & 0x7f for value in range(38)), 0xf7])
+                start = cpu.state()["cycles"]
+                cpu.midi_in(dump[:10])
+                cpu.midi_in(dump[10:])            # joins the queue: no gap, no restart
+                cpu.midi_in(b"")
+                self.assertEqual(cpu.midi_state()["next_cycle"], start + CHARACTER)
+                run(CHARACTER - 1)
+                self.assertEqual((self.get(cpu, base + 0x14) & 1, cpu.state()["registers"]["ifr"]), (0, 0))
+                run(1)
+                self.assertEqual(cpu.state()["registers"]["ifr"], 1 << 4)
+                state = cpu.midi_state()
+                self.assertEqual((state["queued"], state["delivered"], state["fifo"]), (39, 1, 1))
+                run(15 * CHARACTER)               # sixteen unread bytes fill the FIFO and no more
+                state = cpu.midi_state()
+                self.assertEqual((state["fifo"], state["overruns"], state["line_errors"]), (16, 0, 0))
+                received = [self.get(cpu, base) for _ in range(16)]
+                for _ in range(24):
+                    run(CHARACTER)
+                    self.assertEqual(self.get(cpu, base + 0x14) & 3, 1)
+                    received.append(self.get(cpu, base))
+                self.assertEqual(bytes(received), dump)
+                state = cpu.midi_state()
+                self.assertEqual((state["queued"], state["delivered"], state["ignored"], state["overruns"], state["fifo"]),
+                                 (0, 40, 3, 0, 0))
+                self.assertEqual(cpu.state()["cycles"], start + 40 * CHARACTER)
+                # A queue left unread overruns like the real line: one byte lost per character time.
+                cpu.midi_in(bytes(range(18)))
+                run(18 * CHARACTER)
+                state = cpu.midi_state()
+                self.assertEqual((state["fifo"], state["overruns"], state["line_errors"]), (16, 2, 2))
+                self.assertEqual(self.get(cpu, base + 0x14) & 3, 3)
+                self.assertEqual(cpu.midi_state()["line_errors"], 0)   # LSR read cleared OE; the count stays
+                self.assertEqual(cpu.midi_state()["overruns"], 2)
+                self.put(cpu, base + 8, 3)
+                # The instant path is unchanged: seventeen bytes at once overrun a sixteen-byte FIFO.
+                cpu.uart_receive(0, bytes(range(17)))
+                state = cpu.midi_state()
+                self.assertEqual((state["fifo"], state["overruns"], state["delivered"]), (16, 3, 58))
+                # The character time follows the programmed divisor and format.
+                self.put(cpu, base + 8, 3)
+                self.put(cpu, base + 0x20, 0xba)
+                self.put(cpu, base + 0x24, 0)     # divisor 186: 62,500 baud
+                self.put(cpu, base + 0xc, 7)      # two stop bits: 11-bit characters
+                self.assertEqual(cpu.midi_state()["character_cycles"], 11 * 16 * 186 * 2)
+                cpu.midi_in(b"ab")
+                run(11 * 16 * 186 * 2 * 2 - 1)
+                self.assertEqual(cpu.midi_state()["fifo"], 1)
+                run(1)
+                self.assertEqual([self.get(cpu, base), self.get(cpu, base)], [ord("a"), ord("b")])
+                with self.assertRaisesRegex(ValueError, "MIDI input must be bytes"):
+                    cpu.midi_in(0x90)
+                results.append((cpu.state()["cycles"], cpu.midi_state()))
+        self.assertEqual(results[0], results[1])
+
+    def test_uart_sent_cycles_and_midi_loopback(self):
+        CHARACTER = 119040
+        with self.machine() as cpu:
+            base = self.configure_midi(cpu)
+            start = cpu.state()["cycles"]
+            for byte in (0xf8, 0xf2, 0x10):
+                self.put(cpu, base, byte)
+            cpu.run(2 * CHARACTER)
+            self.assertEqual(cpu.uart_sent(0), (b"\xf8\xf2", 2))
+            self.assertEqual(cpu.uart_sent(0, cycles=True), (b"\xf8\xf2", 2, [start + CHARACTER, start + 2 * CHARACTER]))
+            cpu.run(CHARACTER + 5000)
+            self.assertEqual(cpu.uart_sent(0, 2, cycles=True), (b"\x10", 3, [start + 3 * CHARACTER]))
+            self.assertEqual(cpu.uart_sent(0, 3, cycles=True), (b"", 3, []))
+            self.assertEqual(cpu.midi_state()["fifo"], 0)   # no cable: nothing comes back
+            # A byte written later is stamped from its own start, not from the previous byte's end.
+            later = cpu.state()["cycles"]
+            self.put(cpu, base, 0xfa)
+            cpu.run(CHARACTER)
+            self.assertEqual(cpu.uart_sent(0, 3, cycles=True), (b"\xfa", 4, [later + CHARACTER]))
+            cpu.midi_loopback()
+            self.assertTrue(cpu.midi_state()["loopback"])
+            with self.assertRaisesRegex(ValueError, "cabled to MIDI OUT"):
+                cpu.midi_in(b"\x90")
+            begin = cpu.state()["cycles"]
+            for byte in (0x90, 0x40, 0x7f):
+                self.put(cpu, base, byte)
+            cpu.run(CHARACTER - 1)
+            self.assertEqual(self.get(cpu, base + 0x14) & 1, 0)
+            cpu.run(1)
+            self.assertEqual((self.get(cpu, base + 0x14) & 1, self.get(cpu, base)), (1, 0x90))
+            cpu.run(CHARACTER - 1)
+            self.assertEqual(self.get(cpu, base + 0x14) & 1, 0)   # the next arrives a character time later
+            cpu.run(CHARACTER + 1)
+            self.assertEqual([self.get(cpu, base), self.get(cpu, base)], [0x40, 0x7f])
+            state = cpu.midi_state()
+            self.assertEqual((state["looped"], state["delivered"], state["overruns"]), (3, 0, 0))
+            self.assertEqual(cpu.uart_sent(0, 4, cycles=True)[2], [begin + n * CHARACTER for n in (1, 2, 3)])
+            cpu.midi_loopback(False)
+            self.put(cpu, base, 0xfe)
+            cpu.run(CHARACTER)
+            self.assertEqual((cpu.uart_sent(0, 7)[0], cpu.midi_state()["fifo"]), (b"\xfe", 0))
+            cpu.midi_in(b"\x80")
+            with self.assertRaisesRegex(ValueError, "queued bytes"):
+                cpu.midi_loopback()
+            # Without its pins UART0 sends nothing, so nothing loops back either.
+            cpu.run(CHARACTER)
+            cpu.midi_loopback()
+            self.put(cpu, 0x01c1412c, 0)
+            self.put(cpu, base, 0x55)
+            cpu.run(2 * CHARACTER)
+            self.assertEqual((cpu.uart_sent(0)[1], cpu.midi_state()["looped"]), (8, 3))
+        with self.machine() as cpu:   # the ring keeps the latest 4096 bytes and their cycles together
+            base = self.configure_midi(cpu)
+            for index in range(4100):
+                self.put(cpu, base, index & 0xff)
+                cpu.run(CHARACTER)
+            data, total, cycles = cpu.uart_sent(0, cycles=True)
+            self.assertEqual((total, len(data), len(cycles), data[0], data[-1]), (4100, 4096, 4096, 4, 4099 & 0xff))
+            self.assertEqual({b - a for a, b in zip(cycles, cycles[1:])}, {CHARACTER})
+
+    def test_scheduled_gpio_edges_raise_the_bank_interrupt_at_their_cycle(self):
+        results = []
+        for slice_cycles in (997, 50000000):
+            with self.machine() as cpu:
+                def run(cycles):
+                    while cycles:
+                        part = min(cycles, slice_cycles); cpu.run(part); cycles -= part
+                self.enable_module(cpu, 0x01e27000, 3)
+                self.put(cpu, 0x01800104, 72)        # GPIO bank 7 -> CPU interrupt 4
+                self.put(cpu, 0x01e26008, 1 << 7)
+                self.put(cpu, 0x01e2609c, 1 << 24)   # GP7[8] rising-edge interrupt
+                now = cpu.state()["cycles"]
+                with self.assertRaisesRegex(ValueError, "in the past"):
+                    cpu.gpio_schedule(7, 8, True, now - 1)
+                cpu.gpio_schedule(7, 8, False, now + 3000)   # given out of order
+                cpu.gpio_schedule(7, 8, True, now + 1000)
+                self.assertEqual(cpu.gpio_scheduled(), 2)
+                run(999)
+                self.assertEqual((cpu.state()["registers"]["ifr"], self.get(cpu, 0x01e260ac)), (0, 0))
+                run(1)
+                self.assertEqual(cpu.state()["registers"]["ifr"], 1 << 4)
+                self.assertEqual((self.get(cpu, 0x01e260ac), self.get(cpu, 0x01e26098) >> 24 & 1), (1 << 24, 1))
+                self.put(cpu, 0x01e260ac, 1 << 24)
+                cpu.set_register("ifr", 0)
+                run(2000)
+                self.assertEqual((self.get(cpu, 0x01e26098) >> 24 & 1, cpu.state()["registers"]["ifr"]), (0, 0))  # falling: no interrupt
+                self.assertEqual(cpu.gpio_scheduled(), 0)
+                # Two levels in one cycle apply in the order given: a pulse of no width still latches its edge.
+                now = cpu.state()["cycles"]
+                cpu.gpio_schedule(7, 8, True, now + 10)
+                cpu.gpio_schedule(7, 8, False, now + 10)
+                run(10)
+                self.assertEqual((self.get(cpu, 0x01e260ac), self.get(cpu, 0x01e26098) >> 24 & 1), (1 << 24, 0))
+                self.put(cpu, 0x01e260ac, 1 << 24)
+                cpu.set_register("ifr", 0)
+                # A pulse train: 2 pulses per quarter note at 120 BPM is one every 250 ms, 15 ms wide.
+                start = cpu.state()["cycles"] + 372000
+                self.assertEqual(cpu.sync_in(120, 3, start), start + 3 * 93000000)
+                self.assertEqual(cpu.gpio_scheduled(), 6)
+                edges = []
+                for at in (start, start + 5580000, start + 93000000, start + 98580000):
+                    run(at - cpu.state()["cycles"] - 1)
+                    before = self.get(cpu, 0x01e26098) >> 24 & 1
+                    run(1)
+                    edges.append((before, self.get(cpu, 0x01e26098) >> 24 & 1, self.get(cpu, 0x01e260ac) >> 24))
+                    self.put(cpu, 0x01e260ac, 1 << 24)
+                self.assertEqual(edges, [(0, 1, 1), (1, 0, 0), (0, 1, 1), (1, 0, 0)])
+                # The clock stops: the third pulse never comes, and one cut short returns to idle.
+                run(start + 2 * 93000000 + 1000 - cpu.state()["cycles"])
+                self.assertEqual(self.get(cpu, 0x01e26098) >> 24 & 1, 1)
+                cpu.sync_in_stop()
+                self.assertEqual((cpu.gpio_scheduled(), self.get(cpu, 0x01e26098) >> 24 & 1), (0, 0))
+                self.put(cpu, 0x01e260ac, 1 << 24)
+                cpu.set_register("ifr", 0)
+                run(93000000)
+                self.assertEqual((cpu.state()["registers"]["ifr"], self.get(cpu, 0x01e260ac)), (0, 0))
+                # A tempo that does not divide the clock keeps exact long-run timing; other pins are untouched
+                # by clearing this one.
+                now = cpu.state()["cycles"]
+                cpu.gpio_schedule(0, 1, True, now + 5)
+                self.assertEqual(cpu.sync_in(133.3, 7, now) - now, round(7 * 372000000 * 60 / (133.3 * 2)))
+                cpu.gpio_schedule_clear(7, 8)
+                self.assertEqual(cpu.gpio_scheduled(), 1)
+                for arguments in ((0, 4, now), (120, 1, now, 0), (6000, 1, now)):
+                    with self.assertRaisesRegex(ValueError, "expected"):
+                        cpu.sync_in(*arguments)
+                with self.assertRaisesRegex(ValueError, "shorter than"):
+                    cpu.sync_in(1000, 1, now, 96, 15)
+                results.append(cpu.state()["cycles"])
+        self.assertEqual(results[0], results[1])
+
+    def test_gpio_trace_records_watched_output_changes_with_their_cycle(self):
+        with self.machine() as cpu:
+            self.enable_module(cpu, 0x01e27000, 3)
+            DIR, SET, CLR, OUT = 0x01e26088, 0x01e26090, 0x01e26094, 0x01e2608c
+            pin9, pin10 = 1 << 25, 1 << 26
+            self.assertEqual(cpu.gpio_trace(), ([], 0))
+            self.put(cpu, SET, pin9)                         # an input's latch drives nothing
+            self.put(cpu, DIR, 0xffffffff & ~pin9)           # an output, but PINMUX17 has not put GP7[9] on its pin
+            self.assertEqual(cpu.gpio_trace(), ([], 0))
+            cpu.run(100)
+            first = cpu.state()["cycles"]
+            self.put(cpu, 0x01c14164, 0x88)                  # PINMUX17 nibbles 0, 1 = 8: the pin now drives its latch
+            self.assertEqual(cpu.gpio_trace(), ([dict(bank=7, pin=9, high=True, cycles=first)], 1))
+            self.put(cpu, SET, pin9)                         # no change of level, no row
+            cpu.run(5580000)
+            self.put(cpu, CLR, pin9 | pin10)
+            cpu.run(1000)
+            self.put(cpu, OUT, pin9)                         # a whole-word write counts like SET
+            self.put(cpu, DIR, 0xffffffff & ~(pin9 | pin10)) # GP7[10] is not watched
+            self.put(cpu, SET, pin10)
+            rows, total = cpu.gpio_trace()
+            self.assertEqual((total, [(row["high"], row["cycles"] - first) for row in rows]),
+                             (3, [(True, 0), (False, 5580000), (True, 5581000)]))
+            self.assertEqual(cpu.gpio_trace(2), (rows[2:], 3))
+            # Watching a pin that already drives starts with its level; unwatching stops its rows.
+            cpu.run(10)
+            cpu.gpio_watch(7, 10)
+            cpu.gpio_watch(7, 10)
+            cpu.gpio_watch(7, 9, False)
+            self.put(cpu, CLR, pin9 | pin10)
+            rows, total = cpu.gpio_trace(3)
+            self.assertEqual([(row["pin"], row["high"], row["cycles"] - first) for row in rows],
+                             [(10, True, 5581010), (10, False, 5581010)])
+            # Made an input again and back: the level it drives on return is a row even if it is the old one.
+            self.put(cpu, DIR, 0xffffffff)
+            self.put(cpu, DIR, 0xffffffff & ~pin10)
+            self.assertEqual([row["high"] for row in cpu.gpio_trace(5)[0]], [False])
+            # The latest 4096 rows are kept.
+            for index in range(4100):
+                self.put(cpu, SET if index % 2 == 0 else CLR, pin10)
+            rows, total = cpu.gpio_trace()
+            self.assertEqual((total, len(rows), rows[-1]["high"], rows[0]["high"]), (4106, 4096, False, True))
+            with self.assertRaisesRegex(ValueError, "expected GPIO"):
+                cpu.gpio_watch(9, 0)
+
     def test_syscfg_protected_writes_require_both_unlock_keys(self):
         with self.machine() as cpu:
             self.put(cpu, 0x01c14038, 0)

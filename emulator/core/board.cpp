@@ -138,10 +138,15 @@ void Board::enable(bool gpio_handoff) {
         };
         uart[index].interrupt = [this, index] { constexpr unsigned events[] = {38, 46, 61}; event(events[index]); };
         uart_sent[index].count = 0;
-        uart[index].transmitted = [this, index](uint8_t byte, uint64_t) { // disconnected, silent peer profile
-            auto &sent = uart_sent[index]; sent.bytes[sent.count++ % sent.bytes.size()] = byte;
+        uart[index].transmitted = [this, index](uint8_t byte, uint64_t cycle) { // disconnected, silent peer profile
+            auto &sent = uart_sent[index]; size_t at = sent.count++ % sent.bytes.size();
+            sent.bytes[at] = byte; sent.cycles[at] = cycle;
+            if (index == 0 && midi.loopback) { uart[0].receive(byte) ? midi.looped++ : midi.ignored++; }
         };
     }
+    midi = MidiIn{};
+    gpio_scheduled.clear();
+    gpio_trace = GpioTrace{}; gpio_trace.watch[3] = 1u << (16 + 9);
     gpio_inputs = {0, 0xd4010000, 0x05b50001, 0, 0};
     for (unsigned pair = 0; pair < 5; pair++) registers[GPIO + 0x10 + pair * 0x28] = 0xffffffff;
     // Bootloader handoff keeps GP4[11] (power hold) asserted.
@@ -229,6 +234,60 @@ void Board::uart_receive(unsigned index, uint8_t byte) {
     if (index == 1 && panel.enabled) throw std::runtime_error("UART1 input comes from the panel stream while it is on");
     uart[index].receive(byte);
     deadline = 0;
+}
+uint64_t Board::midi_character() const {
+    uint64_t programmed = uart[0].character_cycles();
+    return programmed ? programmed : MidiIn::CHARACTER_CYCLES;
+}
+void Board::midi_in(const uint8_t *data, size_t size, uint64_t cycle) {
+    if (!enabled) throw std::runtime_error("MIDI IN needs the board");
+    if (midi.loopback) throw std::runtime_error("MIDI IN is cabled to MIDI OUT while the loopback is on");
+    if (size > MidiIn::CAPACITY - midi.queue.size()) throw std::runtime_error("MIDI IN queue is full (1 MiB)");
+    if (!size) return;
+    if (midi.queue.empty()) midi.next = cycle + midi_character();
+    midi.queue.insert(midi.queue.end(), data, data + size);
+    deadline = 0;
+}
+void Board::midi_loopback(bool on) {
+    if (!enabled) throw std::runtime_error("the MIDI loopback needs the board");
+    if (on && !midi.queue.empty()) throw std::runtime_error("MIDI IN still has queued bytes to deliver");
+    midi.loopback = on;
+}
+void Board::gpio_schedule(unsigned bank, unsigned pin, bool high, uint64_t cycle, uint64_t now) {
+    if (!enabled || bank > 8 || pin > 15) throw std::runtime_error("invalid GPIO input");
+    if (cycle < now) throw std::runtime_error("GPIO edge is scheduled in the past");
+    if (gpio_scheduled.size() >= 65536) throw std::runtime_error("too many scheduled GPIO edges (65536)");
+    auto after = std::upper_bound(gpio_scheduled.begin(), gpio_scheduled.end(), cycle,
+                                  [](uint64_t at, const GpioEdge &edge) { return at < edge.cycle; });
+    gpio_scheduled.insert(after, GpioEdge{cycle, uint8_t(bank), uint8_t(pin), high});
+    deadline = 0;
+}
+void Board::gpio_schedule_clear(unsigned bank, unsigned pin) {
+    if (!enabled || bank > 8 || pin > 15) throw std::runtime_error("invalid GPIO input");
+    std::erase_if(gpio_scheduled, [=](const GpioEdge &edge) { return edge.bank == bank && edge.pin == pin; });
+    deadline = 0;
+}
+Board::Driven Board::gpio_driven(unsigned pair) const {
+    auto value = [this](uint32_t address) { auto it = registers.find(address); return it == registers.end() ? 0u : it->second; };
+    uint32_t base = GPIO + 0x10 + pair * 0x28, outputs = ~value(base);
+    if (pair == 4) outputs &= 0xffff;
+    if (pair == 3 && (value(SYSCFG + 0x164) & 15) != 8) outputs &= ~(1u << (16 + 9)); // GP7[9] is not on its pin
+    return {outputs, value(base + 4) & outputs};
+}
+void Board::gpio_record(unsigned pair, Driven previous, uint64_t cycle) {
+    Driven now = gpio_driven(pair);
+    uint32_t changed = gpio_trace.watch[pair] & now.outputs & (~previous.outputs | (now.levels ^ previous.levels));
+    for (unsigned bit = 0; changed; bit++, changed >>= 1) if (changed & 1)
+        gpio_trace.rows[gpio_trace.count++ % gpio_trace.rows.size()] =
+            GpioChange{cycle, uint8_t(pair * 2 + bit / 16), uint8_t(bit % 16), (now.levels >> bit & 1) != 0};
+}
+void Board::gpio_watch(unsigned bank, unsigned pin, bool on, uint64_t cycle) {
+    if (!enabled || bank > 8 || pin > 15) throw std::runtime_error("invalid GPIO pin");
+    uint32_t mask = 1u << ((bank % 2) * 16 + pin), &watch = gpio_trace.watch[bank / 2];
+    if (!on) { watch &= ~mask; return; }
+    if (watch & mask) return;
+    Driven before = gpio_driven(bank / 2); before.outputs &= ~mask; // a pin already driving starts with its level
+    watch |= mask; gpio_record(bank / 2, before, cycle);
 }
 void Board::panel_stream(bool on, uint64_t cycle) {
     if (!enabled) throw std::runtime_error("the panel stream needs the board");
@@ -364,6 +423,15 @@ void Board::advance(uint64_t cycle) {
         else panel.next += std::min<uint64_t>(std::max<uint64_t>(uart[1].character_cycles(), 1), PanelStream::MESSAGE_CYCLES / 3);
         panel.position = (panel.position + 1) % 48;
     }
+    while (!gpio_scheduled.empty() && cycle >= gpio_scheduled.front().cycle) {
+        GpioEdge edge = gpio_scheduled.front(); gpio_scheduled.pop_front();
+        gpio_input(edge.bank, edge.pin, edge.high);
+    }
+    while (cycle >= midi.next) {
+        uint8_t byte = midi.queue.front(); midi.queue.pop_front();
+        uart[0].receive(byte) ? midi.delivered++ : midi.ignored++;
+        midi.next = midi.queue.empty() ? UINT64_MAX : midi.next + midi_character();
+    }
     for (auto &controller : uart) controller.advance(cycle);
     mmcsd.advance(cycle);
     i2c.advance(cycle);
@@ -375,7 +443,8 @@ void Board::advance(uint64_t cycle) {
     for (auto at : psc_deadline) deadline = std::min(deadline, at);
     for (const auto &controller : spi) deadline = std::min(deadline, controller.next_event());
     for (const auto &controller : uart) deadline = std::min(deadline, controller.next_event());
-    deadline = std::min(deadline, panel.next);
+    deadline = std::min({deadline, panel.next, midi.next});
+    if (!gpio_scheduled.empty()) deadline = std::min(deadline, gpio_scheduled.front().cycle);
     deadline = std::min({deadline, mmcsd.next_event(), i2c.next_event(), mcasp.next_event(), usb.next_event()});
 }
 void Board::record(uint32_t address, uint32_t value, uint32_t size, bool write, uint64_t cycle, uint32_t pc) {
@@ -465,6 +534,7 @@ void Board::write_word(uint32_t address, uint32_t value, uint64_t cycle) {
         unsigned pair = (off - 0x10) / 0x28, reg = (off - 0x10) % 0x28;
         uint32_t base = GPIO + 0x10 + pair * 0x28;
         uint32_t previous = gpio_levels(pair);
+        Driven driven = gpio_driven(pair);
         if (pair == 4) value &= 0xffff;
         if (reg == 0x10) throw std::runtime_error("GPIO IN_DATA is read-only");
         if (reg == 8 || reg == 0x14 || reg == 0x1c) registers[base + (reg == 8 ? 4 : reg)] |= value;
@@ -472,6 +542,7 @@ void Board::write_word(uint32_t address, uint32_t value, uint64_t cycle) {
         else if (reg == 0x24) registers[address] &= ~value;
         else registers[address] = value;
         gpio_edges(pair, previous);
+        gpio_record(pair, driven, cycle);
         return;
     }
     for (unsigned index = 0; index < PSC.size(); index++) if (address >= PSC[index] && address < PSC[index] + 0x1000) {
@@ -501,10 +572,12 @@ void Board::write_word(uint32_t address, uint32_t value, uint64_t cycle) {
         uint32_t previous1 = 0, previous2 = 0;
         bool matrix_mux = keys_down && (off == 0x138 || off == 0x13c || off == 0x140 || off == 0x14c);
         if (matrix_mux) { previous1 = gpio_levels(1); previous2 = gpio_levels(2); }
+        Driven driven = gpio_driven(3);
         if (off == 0x178) registers[SYSCFG + 0x174] &= ~value;
         else if (off == 0x174) registers[address] |= value;
         else registers[address] = value;
         if (matrix_mux) { gpio_edges(1, previous1); gpio_edges(2, previous2); }
+        if (off == 0x164) gpio_record(3, driven, cycle);
         return;
     }
     for (unsigned i = 0; i < TIMER.size(); i++) if (address >= TIMER[i] && address < TIMER[i] + 0x80) {

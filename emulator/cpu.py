@@ -9,6 +9,7 @@ from core_build import build_core
 from ir import Instruction, REGISTER, REGISTERS, State
 
 READ, WRITE, EXECUTE = 1, 2, 4
+CYCLES_PER_SECOND = 372000000
 RET = 0xDEAD0000
 STATUSES = ("budget", "decode", "returned", "fault", "breakpoint")
 
@@ -70,6 +71,14 @@ class CPU:
             "panel_level": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32]),
             "panel_stream_stats": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint64)]),
             "uart_sent": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint64, C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64)]),
+            "uart_sent_cycles": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint64, C.POINTER(C.c_uint64), C.c_uint32, C.POINTER(C.c_uint64)]),
+            "midi_in": (C.c_int, [C.c_void_p, C.c_void_p, C.c_uint32]),
+            "midi_loopback": (C.c_int, [C.c_void_p, C.c_uint32]),
+            "midi_stats": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint64)]),
+            "gpio_schedule": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint64]),
+            "gpio_schedule_clear": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32]),
+            "gpio_watch": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32, C.c_uint32]),
+            "gpio_trace": (C.c_int, [C.c_void_p, C.c_uint64, C.POINTER(C.c_uint64), C.c_uint32, C.POINTER(C.c_uint64)]),
             "oled_frame": (C.c_int, [C.c_void_p, C.c_void_p, C.POINTER(C.c_uint64), C.POINTER(C.c_uint32)]),
             "oled_first_frame_cycle": (C.c_uint64, [C.c_void_p]),
             "nor_load": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32, C.c_void_p, C.c_uint32]),
@@ -499,14 +508,118 @@ class CPU:
         return {"enabled": bool(fields[0]), "messages": fields[1], "levels": list(fields[2:18]),
                 "messages_per_second": 4194, "rate_measured": True, "order_spacing_and_levels_measured": False}
 
-    def uart_sent(self, index, since=0):
-        """Bytes the guest transmitted on a UART from sequence `since`; returns (bytes, total sent)."""
+    def uart_sent(self, index, since=0, cycles=False):
+        """Bytes the guest transmitted on a UART from sequence `since` (the latest 4096 are kept): returns
+        (bytes, total sent). With `cycles`, returns (bytes, total sent, cycles): the guest cycle each of those
+        bytes finished at, the end of its last stop bit."""
         self.ensure_open()
         if type(index) is not int or not 0 <= index < 3 or type(since) is not int or since < 0:
             raise ValueError("expected UART index 0..2 and a non-negative sequence")
         data, fields = (C.c_ubyte * 4096)(), (C.c_uint64 * 2)()
         self.checked(self.lib.c6_uart_sent(self.handle, index, since, data, len(data), fields))
-        return bytes(data[:fields[1]]), fields[0]
+        if not cycles:
+            return bytes(data[:fields[1]]), fields[0]
+        stamps = (C.c_uint64 * 4096)()
+        self.checked(self.lib.c6_uart_sent_cycles(self.handle, index, since, stamps, len(stamps), fields))
+        return bytes(data[:fields[1]]), fields[0], list(stamps[:fields[1]])
+
+    def midi_in(self, data):
+        """Queue bytes from a sender on the MIDI IN jack (UART0). They arrive back to back, one per character
+        time of the divisor and format the guest programmed (119,040 cycles, 31,250 baud 8N1, before it has
+        programmed any), the first starting now if nothing is queued. uart_receive(0, ...) is the unpaced path."""
+        self.ensure_open()
+        if isinstance(data, int):
+            raise ValueError("MIDI input must be bytes or an iterable of bytes")
+        data = bytes(data)
+        self.checked(self.lib.c6_midi_in(self.handle, C.create_string_buffer(data, len(data) or 1), len(data)))
+
+    def midi_loopback(self, enabled=True):
+        """A cable from MIDI OUT to MIDI IN: each byte UART0 transmits is received as it finishes."""
+        self.ensure_open()
+        self.checked(self.lib.c6_midi_loopback(self.handle, bool(enabled)))
+
+    def midi_state(self):
+        """The MIDI IN peer and UART0's receiver. `overruns` counts bytes lost to a full FIFO since the board
+        was enabled or the guest reset the UART; `line_errors` is what LSR would now report (OE 2, PE 4, FE 8,
+        BI 16) and is cleared when the guest reads LSR. Reading this changes nothing."""
+        self.ensure_open()
+        fields = (C.c_uint64 * 10)()
+        self.checked(self.lib.c6_midi_stats(self.handle, fields))
+        result = dict(zip(("queued", "delivered", "ignored", "looped", "loopback", "next_cycle", "character_cycles",
+                           "fifo", "overruns", "line_errors"), fields))
+        result["loopback"] = bool(result["loopback"])
+        result["next_cycle"] = result["next_cycle"] if result["queued"] else None
+        return result
+
+    def gpio_schedule(self, bank, pin, high, cycle):
+        """Apply an external pin level at a guest cycle (not in the past), as gpio_input would then."""
+        self.ensure_open()
+        if type(bank) is not int or not 0 <= bank <= 8 or type(pin) is not int or not 0 <= pin <= 15:
+            raise ValueError("expected GPIO bank 0..8 and pin 0..15")
+        if type(cycle) is not int or not 0 <= cycle < 1 << 63:
+            raise ValueError("expected a guest cycle")
+        self.checked(self.lib.c6_gpio_schedule(self.handle, bank, pin, bool(high), cycle))
+
+    def gpio_schedule_clear(self, bank, pin):
+        """Drop a pin's scheduled levels that have not been applied; the pin stays as it is."""
+        self.ensure_open()
+        if type(bank) is not int or not 0 <= bank <= 8 or type(pin) is not int or not 0 <= pin <= 15:
+            raise ValueError("expected GPIO bank 0..8 and pin 0..15")
+        self.checked(self.lib.c6_gpio_schedule_clear(self.handle, bank, pin))
+
+    def sync_in(self, bpm, pulses, start=None, per_quarter=2, width_ms=15, active_high=True):
+        """Schedule a pulse train on SYNC IN (GP7[8]): `pulses` pulses of `width_ms` at `per_quarter` to the
+        quarter note, the first one's leading edge at cycle `start` (now by default). Pulse times are rounded
+        from the exact tempo, so they do not drift. Returns the cycle the next pulse would start at: pass it
+        as `start` to carry on at another tempo, or schedule nothing more for a clock that stops. The pin
+        idles low (high with active_high=False); how the jack's level maps to the pin was not measured."""
+        if not isinstance(bpm, (int, float)) or not 1 <= bpm <= 1000 or type(pulses) is not int or not 0 <= pulses <= 16384:
+            raise ValueError("expected a tempo of 1..1000 BPM and 0..16384 pulses")
+        if type(per_quarter) is not int or not 1 <= per_quarter <= 96 or not isinstance(width_ms, (int, float)) or width_ms <= 0:
+            raise ValueError("expected 1..96 pulses per quarter note and a positive pulse width")
+        from fractions import Fraction
+        start = self.cycles() if start is None else start
+        period = Fraction(CYCLES_PER_SECOND * 60) / (Fraction(bpm) * per_quarter)
+        width = round(Fraction(width_ms) * CYCLES_PER_SECOND / 1000)
+        if not 0 < width < period:
+            raise ValueError("the pulse width must be shorter than the pulse period")
+        for pulse in range(pulses):
+            edge = start + round(pulse * period)
+            self.gpio_schedule(7, 8, active_high, edge)
+            self.gpio_schedule(7, 8, not active_high, edge + width)
+        return start + round(pulses * period)
+
+    def sync_in_stop(self, active_high=True):
+        """Stop the SYNC IN clock now: drop the edges not yet applied and return the pin to its idle level,
+        which cuts short a pulse under way."""
+        self.gpio_schedule_clear(7, 8)
+        self.gpio_input(7, 8, not active_high)
+
+    def gpio_watch(self, bank, pin, enabled=True):
+        """Record an output pin's level changes in gpio_trace (GP7[9], SYNC OUT, is watched from the start)."""
+        self.ensure_open()
+        if type(bank) is not int or not 0 <= bank <= 8 or type(pin) is not int or not 0 <= pin <= 15:
+            raise ValueError("expected GPIO bank 0..8 and pin 0..15")
+        self.checked(self.lib.c6_gpio_watch(self.handle, bank, pin, bool(enabled)))
+
+    def gpio_trace(self, since=0):
+        """Level changes of watched output pins from sequence `since` (the latest 4096 are kept): returns
+        (rows, total), each row a dict of bank, pin, high and the guest cycle of the register write. A pin's
+        first row is the level it drives when it becomes an output."""
+        self.ensure_open()
+        if type(since) is not int or since < 0:
+            raise ValueError("expected a non-negative sequence")
+        rows, fields = (C.c_uint64 * 8192)(), (C.c_uint64 * 3)()
+        self.checked(self.lib.c6_gpio_trace(self.handle, since, rows, 4096, fields))
+        return [dict(bank=rows[i * 2 + 1] >> 16, pin=rows[i * 2 + 1] >> 8 & 255, high=bool(rows[i * 2 + 1] & 1), cycles=rows[i * 2])
+                for i in range(fields[1])], fields[0]
+
+    def gpio_scheduled(self):
+        """How many scheduled input levels are still to be applied."""
+        self.ensure_open()
+        rows, fields = (C.c_uint64 * 2)(), (C.c_uint64 * 3)()
+        self.checked(self.lib.c6_gpio_trace(self.handle, 1 << 62, rows, 0, fields))
+        return fields[2]
 
     def audio_tail(self, since):
         """Slot words transmitted after the first `since` words: (little-endian uint32 bytes,

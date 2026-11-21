@@ -15,12 +15,13 @@ from urllib.request import Request, urlopen
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 import stock_ui
-from stock_ui import AUDIO, CYCLES_PER_SECOND, FRAME, STATUS, Panel, make_server
+from stock_ui import AUDIO, CYCLES_PER_SECOND, FRAME, MIDI, STATUS, Panel, make_server
 
 
 class Processor:
     def __init__(self):
         self.now, self.words, self.sent, self.pins, self.stream = 0, [], b"", [], False
+        self.midi_sent, self.midi_received = b"", b""
         self.frame = bytes(8192)
 
     def cycles(self):
@@ -34,7 +35,11 @@ class Processor:
         return self.frame, {"on": True, "complete_frames": 1}
 
     def uart_sent(self, index, since):
-        return self.sent[since:], len(self.sent)
+        sent = self.sent if index == 1 else self.midi_sent
+        return sent[since:], len(sent)
+
+    def midi_state(self):
+        return {"queued": 0, "delivered": len(self.midi_received), "ignored": 0, "overruns": 0, "loopback": False}
 
     def fast_forward_state(self):
         return {"skipped_cycles": 0}
@@ -84,6 +89,10 @@ class Machine:
     def uart_receive(self, index, data):
         self.log.append((self.cpu.now, "uart", index, bytes(data)))
 
+    def midi_in(self, data):
+        self.cpu.midi_received += bytes(data)
+        self.log.append((self.cpu.now, "midi", bytes(data)))
+
 
 class StockPanel(unittest.TestCase):
     def settle(self, panel, steps=400):
@@ -96,6 +105,8 @@ class StockPanel(unittest.TestCase):
                       {"type": "encoder", "index": 5, "delta": 1}, {"type": "encoder", "index": 0, "delta": 0},
                       {"type": "pad", "index": 15, "value": 1}, {"type": "pad", "index": 0, "value": 16384},
                       {"type": "battery", "value": -1}, {"type": "power", "down": "yes"},
+                      {"type": "midi", "bytes": []}, {"type": "midi", "bytes": [256]}, {"type": "midi", "bytes": "\x90"},
+                      {"type": "midi", "bytes": [0] * 1025}, {"type": "midi", "bytes": [0x90, 60.0, 1]},
                       {"type": "control", "action": "reset"}, {"type": "key", "index": 1, "down": True, "extra": 1}, []):
             with self.subTest(event=event), self.assertRaises(ValueError):
                 panel.post(event)
@@ -138,6 +149,24 @@ class StockPanel(unittest.TestCase):
         self.settle(panel, 60)
         self.assertEqual([entry[1:] for entry in machine.log if entry[1] != "key"], [("level", 3, 1024), ("level", 15, 16383)])
         self.assertEqual(panel.describe()["pads"][3], 1024)
+
+    def test_midi_input_reaches_the_midi_in_peer_and_midi_out_is_published_in_order(self):
+        machine = Machine()
+        machine.cpu.midi_sent = b"\xf8"                      # sent before the panel started: not replayed
+        panel = Panel(machine)
+        client = panel.subscribe()
+        panel.post({"type": "midi", "bytes": [0x90, 60, 100]}); panel.post({"type": "midi", "bytes": [0x80, 60, 0]})
+        panel.step()
+        self.assertEqual([row[1:] for row in machine.log], [("midi", b"\x90\x3c\x64"), ("midi", b"\x80\x3c\x00")])
+        machine.cpu.midi_sent += b"\xfa\xf8"; panel.step()
+        machine.cpu.midi_sent += b"\xf8"; panel.step(); panel.step()
+        payloads = []
+        while not client.empty():
+            data = client.get()
+            if data[0] == MIDI:
+                payloads.append(data[5:])
+        self.assertEqual(payloads, [b"\xfa\xf8", b"\xf8"])
+        self.assertEqual(panel.describe()["midi"], {"queued": 0, "delivered": 6, "overruns": 0, "sent": 4})
 
     def test_power_key_cancels_the_scripted_hold_and_drives_gp3_0_low(self):
         machine = Machine(); panel = Panel(machine)

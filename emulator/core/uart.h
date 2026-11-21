@@ -23,7 +23,11 @@ public:
     std::function<void(uint8_t, uint64_t)> transmitted;
     void reset();
     void advance(uint64_t cycle);
-    void receive(uint8_t value);
+    // False if the receiver is held in reset and the character is lost unseen.
+    bool receive(uint8_t value);
+    uint64_t overruns = 0; // characters lost to a full receiver since reset; LSR OE is cleared by reading
+    size_t received() const { return rx.size(); }
+    uint32_t line_status_errors() const { return line_errors; }
     uint32_t read(uint32_t offset, uint64_t cycle);
     void write(uint32_t offset, uint32_t value, uint64_t cycle);
     uint64_t next_event() const { return deadline; }

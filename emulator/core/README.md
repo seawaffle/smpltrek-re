@@ -143,8 +143,13 @@ fault. Missing instructions and unmapped MMIO stop with the PC, instruction and 
   CSR and IER, `DINT`, `RINT` and `ROTL`. `c6_micro(machine, 0)` turns the lean path off, so that
   the two can be compared. Wholly ordinary RAM pages are reached through direct tables;
   device, partial and unmapped pages keep the checked path. Delayed results use a ring by due cycle.
-- `c6_uart_sent` returns the bytes a UART finished transmitting (the most recent 4,096). The peer
-  stays silent; this only observes, for example, stock's panel LED commands on UART1.
+- `c6_uart_sent` returns the bytes a UART finished transmitting (the most recent 4,096) and
+  `c6_uart_sent_cycles` the cycle each one's last stop bit ended at. The peer stays silent; this only
+  observes, for example, stock's panel LED commands on UART1 or MIDI clock on UART0.
+- `c6_midi_in` queues bytes for a paced sender on UART0's receiver, `c6_midi_loopback` cables UART0's
+  transmitter to its receiver, `c6_gpio_schedule` applies external pin levels at given cycles and
+  `c6_gpio_trace` returns the level changes of watched output pins (`core.h` has the details; the
+  emulator README, "MIDI and SYNC", what they assume).
 - All instructions in a packet read registers before the packet's register results are committed.
   Loads have four delay slots; supported 16-bit multiplies have one; supported 32-bit multiplies
   and MVD have three. Protected loads stall subsequent issue for their result.
@@ -417,7 +422,8 @@ input planes. The stock initial RX descriptor has 255 words; recurring links hav
 settled buffers' pair phase. The regression records that guest configuration explicitly.
 
 UART supports divisor/framing timing, transmit and receive FIFOs, loopback, reset, status side
-effects and receive/transmit interrupts. The peer is silent until bytes are explicitly injected,
+effects and receive/transmit interrupts. The peer is silent until bytes are explicitly injected
+(`c6_uart_receive`, all at once, or on UART0 `c6_midi_in`, a character time apart),
 or, on UART1, until `c6_panel_stream` turns on the panel MCU's continuous analogue reports (rate
 and channel order as measured in device sessions M1 and M2; even spacing and idle level 0 are
 assumptions; see the emulator README). Other panel MCU messages (`A1`), receive timeout and modem

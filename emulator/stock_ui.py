@@ -3,7 +3,9 @@
 
 Runs the stock SYSTEM image on the compiled C674x core at real-time pace and serves a local
 web page (Linux, Windows and macOS browsers). Inputs are external ones only: key switches,
-encoder quadrature phases and panel-MCU bytes on UART1. No guest function is hooked.
+encoder quadrature phases, panel-MCU bytes on UART1 and MIDI bytes on the MIDI IN jack (UART0),
+which the page can take from the browser's MIDI devices; what the guest sends on MIDI OUT goes to
+the page for them. No guest function is hooked.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -26,7 +28,7 @@ from display import png
 
 UI = Path(__file__).resolve().parent / "ui"
 CYCLES_PER_SECOND = 372000000
-FRAME, AUDIO, STATUS = 1, 2, 3
+FRAME, AUDIO, STATUS, MIDI = 1, 2, 3, 4
 KEYS, ENCODERS, PADS = 48, 5, 15
 # One completed 8N1 byte per 8000 DSP cycles matches stock's UART1 divisor.
 UART_BYTE_CYCLES = 8000
@@ -68,6 +70,7 @@ class Panel:
         self.frame, self.frame_info = self.cpu.oled_frame()
         self.keys, self.pads, self.power, self.power_manual = 0, [0] * PADS, False, False
         self.uart_seen, self.led_packet, self.leds = 0, [], [0] * 144
+        self.midi_seen = self.cpu.uart_sent(0, 0)[1]
         self.rate = 0.0
         # Compiled blocks: hot code is compiled off this thread and installed here.
         self.block_pool = ThreadPoolExecutor(max_workers=1) if compiled else None
@@ -95,6 +98,9 @@ class Panel:
             integer(event["value"], 0, 16383, "battery value")
         elif kind == "power" and set(event) == {"type", "down"} and type(event["down"]) is bool:
             pass
+        elif kind == "midi" and set(event) == {"type", "bytes"} and type(event["bytes"]) is list and 1 <= len(event["bytes"]) <= 1024:
+            for byte in event["bytes"]:
+                integer(byte, 0, 255, "MIDI byte")
         elif kind == "control" and set(event) == {"type", "action"} and event["action"] in ("pause", "resume", "save"):
             pass
         else:
@@ -134,6 +140,8 @@ class Panel:
             self.analogue(event["index"], event["value"])
         elif kind == "battery":
             self.analogue(15, event["value"])
+        elif kind == "midi":
+            self.stock.midi_in(bytes(event["bytes"]))
         elif kind == "power":
             # GP3[0] is low while the power key is held. A manual press overrides the scripted hold.
             self.stock.power_release = None
@@ -183,7 +191,9 @@ class Panel:
                     checkpoints=[row["name"] for row in self.stock.checkpoints][-3:],
                     conditional=self.cpu.reserved_low_state()["enabled"] or self.cpu.reserved_low_read_state()["enabled"],
                     persistent=self.state_directory is not None, labels=self.labels,
-                    panel_stream=self.cpu.panel_stream_state()["enabled"])
+                    panel_stream=self.cpu.panel_stream_state()["enabled"],
+                    midi={name: value for name, value in self.cpu.midi_state().items() if name in ("queued", "delivered", "overruns")}
+                    | {"sent": self.midi_seen})
 
     def publish(self, data, droppable=False, frame=False):
         """Queue for every client. A droppable message skips a congested client; a skipped
@@ -243,6 +253,10 @@ class Panel:
         self.audio_lost += lost
         if data:
             self.publish(message(AUDIO, bytes([slot]) + data), droppable=True)
+        # MIDI OUT: every byte, in order, as each slice ends. A client too far behind to take them is dropped.
+        sent, self.midi_seen = self.cpu.uart_sent(0, self.midi_seen)
+        if sent:
+            self.publish(message(MIDI, sent))
         return True
 
     def observe(self):

@@ -165,6 +165,32 @@ int c6_panel_stream_stats(void *machine, uint64_t *fields);
 /* Bytes the guest finished transmitting on a UART, oldest first from sequence `since`
    (the most recent 4096 are retained). fields[2]: total bytes sent, bytes copied. */
 int c6_uart_sent(void *machine, uint32_t index, uint64_t since, uint8_t *data, uint32_t capacity, uint64_t *fields);
+/* The cycle each of those bytes finished at (the end of its last stop bit), from the same sequence.
+   fields[2]: total bytes sent, cycles copied. */
+int c6_uart_sent_cycles(void *machine, uint32_t index, uint64_t since, uint64_t *cycles, uint32_t capacity, uint64_t *fields);
+/* Optional sender on the MIDI IN jack (UART0 RXD): queued bytes arrive back to back, one per character
+ * time of the divisor and format the guest programmed (119,040 cycles, MIDI's 31,250 baud 8N1, while it
+ * has programmed none), the first starting now if the line is idle. c6_uart_receive remains the unpaced
+ * path. With the loopback on, MIDI OUT is cabled to MIDI IN instead: every byte UART0 transmits is
+ * received at the cycle it finishes, and c6_midi_in is refused.
+ * Stats fields[10]: bytes queued, delivered, ignored (receiver in reset), looped back, loopback on,
+ * cycle the next queued byte arrives at (0 if none), character cycles, bytes waiting in the receive
+ * FIFO, overruns since the board was enabled or the UART reset, pending LSR error bits (OE 2, PE 4,
+ * FE 8, BI 16; reading LSR clears them). */
+int c6_midi_in(void *machine, const uint8_t *data, uint32_t size);
+int c6_midi_loopback(void *machine, uint32_t enabled);
+int c6_midi_stats(void *machine, uint64_t *fields);
+/* An external pin level applied at a guest cycle (not in the past), as c6_gpio_input would then; edges of
+ * one cycle apply in the order given. c6_gpio_schedule_clear drops a pin's edges not yet applied and
+ * leaves its level where it is. */
+int c6_gpio_schedule(void *machine, uint32_t bank, uint32_t pin, uint32_t high, uint64_t cycle);
+int c6_gpio_schedule_clear(void *machine, uint32_t bank, uint32_t pin);
+/* Level changes of watched output pins (GP7[9] from the start), oldest first from sequence `since`, the
+ * most recent 4096 retained. rows: cycle, bank << 16 | pin << 8 | level, per change. A pin's first row is
+ * the level it drives on becoming an output (or on being watched while one).
+ * fields[3]: total changes, rows copied, scheduled input edges not yet applied. */
+int c6_gpio_watch(void *machine, uint32_t bank, uint32_t pin, uint32_t enabled);
+int c6_gpio_trace(void *machine, uint64_t since, uint64_t *rows, uint32_t capacity, uint64_t *fields);
 int c6_oled_frame(void *machine, uint8_t *data, uint64_t *bytes, uint32_t *fields);
 uint64_t c6_oled_first_frame_cycle(void *machine);
 /* Backing media only; guest accesses still travel through SPI0. Each chip is 16 MiB. */

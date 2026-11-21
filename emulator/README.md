@@ -4,8 +4,8 @@ An emulator for the SmplTrek's TI C6748 DSP and its board, built to run the unmo
 firmware. The [C++ C674x core](core/README.md) executes original DSP binaries, instruction by
 instruction and cycle by cycle, with models of the board's peripherals: timers and interrupts,
 EDMA, SPI1 and the OLED panel, I2C0 and the TLV320AIC3106 codec, McASP0 audio, MMC/SD with a FAT
-card image, the SPI NOR flash, UART1 to the panel MCU, USB0 (no host), and the GPIO key matrix and
-encoders. It runs SmplTrek, Lofi-12 XT and CyDrums updates (one board, the same panel) and a linked
+card image, the SPI NOR flash, UART1 to the panel MCU, UART0 with a MIDI IN sender and timestamped
+MIDI OUT, USB0 (no host), and the GPIO key matrix, encoders and SYNC pins. It runs SmplTrek, Lofi-12 XT and CyDrums updates (one board, the same panel) and a linked
 DSP program (ELF) you supply. It starts where the bootloader hands over to the SYSTEM image; the
 bootloader itself is not run. The emulator builds no firmware of its own, and no Sonicware code is
 in this repository: download the updates into `firmware/` (layout in `firmware/README.md`).
@@ -79,7 +79,8 @@ against the stock firmware's behaviour:
   compared with the host ([CPU model](#cpu-model-loops-compiled-c-and-the-instruction-set)).
 - **Board:** interrupt event routing, PSC, pin mux, GPIO, the four timers, EDMA3, SPI0 (NOR) and
   SPI1 (OLED), I2C0 and the codec's control registers, McASP0 and its DMA ring, MMCSD0 with PIO and
-  EDMA (SD 2.0 SDSC, single and multiblock), UART1, USB0's control plane and CPPI DMA set-up
+  EDMA (SD 2.0 SDSC, single and multiblock), UART0 (MIDI DIN) and UART1, the SYNC IN and SYNC OUT
+  pins ([MIDI and SYNC](#midi-and-sync-2026-11-20)), USB0's control plane and CPPI DMA set-up
   registers with no host, the DDR controller's status registers, and the cache control registers
   (memory is coherent). One guest clock drives everything: 372 MHz CPU, 24 MHz timer 0/1 input.
 - **Unit measurements** from device sessions M1 to M3 (`experiments/README.md`): misaligned
@@ -218,6 +219,9 @@ changes the stream's pair phase; both settled buffers and both floating-point pl
 distinct signs and the 2:1 level ratio. Stock's monitor output is silent in that start-up window.
 
 ## Stock checks
+
+`python3 -B emulator/tests/stock_midi.py --conditional` checks the MIDI and SYNC models against
+3.2.174; what it drives and what it found are under [MIDI and SYNC](#midi-and-sync-2026-11-20).
 
 `python3 -B emulator/tests/stock_survey.py --conditional` repeats the start-up survey above as a
 regression check: all thirteen SmplTrek, Lofi-12 XT and CyDrums updates, each with no card and with a blank
@@ -753,6 +757,16 @@ column beside it.
   report stream described under "Panel MCU stream" below, as the unit's MCU does, and a press
   sets the level its channel reports; drum pads play. With `--no-panel-stream` one report is sent
   per change instead, which is faster but plays nothing on a drum pad (`tests/stock_pad.py`).
+- **MIDI** (side column, **Connect MIDI devices**; a browser with Web MIDI, such as Chrome, Edge or
+  Firefox). Every MIDI input the browser offers plays the emulated MIDI IN jack through the paced
+  sender described under [MIDI and SYNC](#midi-and-sync-2026-11-20), and the bytes the firmware
+  sends on MIDI OUT go to every MIDI output, cut into whole messages. So a keyboard plays the
+  firmware's tracks and its clock or notes drive a synth. Input timing inside the guest is exact;
+  output leaves when the page receives it, each emulation slice (2 ms) plus the page's own delay,
+  so it is late and uneven by a few milliseconds: fine for playing, not for measuring clock
+  jitter. System exclusive passes only if the browser grants it. The page's message assembly and
+  the server path are tested (`tests/stock_ui_smoke.js`, `tests/test_stock_ui.py`); no MIDI
+  hardware was connected to it.
 - **Panel LEDs** light the control they belong to: the `C1 a b c value` commands stock transmits
   to the panel MCU are mapped through the table that `analysis/led_table.py` prints (keys and
   steps green and red, pads and the VALUE knob red, green and blue). The raw 144 addresses are
@@ -900,6 +914,71 @@ and the message handling behind it), in 14 million entries into host code instea
 That is work the unit's CPU also does. Two attempts to make it cheaper were measured against the
 unchanged core and dropped because neither helped; they are described in
 [the performance notes](performance-investigation.md).
+
+## MIDI and SYNC (2026-11-20)
+
+MIDI DIN is UART0 and the SYNC jacks are GP7[8] (in) and GP7[9] (out)
+(`docs/04-hardware-access.md`). The board model has a peer for each, all timed in guest cycles
+inside the core, so a run is identical whatever the slice size, with fast-forward or without.
+From Python (`cpu.py`):
+
+| Call | What it does |
+|---|---|
+| `midi_in(data)` | Queue bytes from a sender on MIDI IN. They arrive back to back, one per character time of the divisor and format the guest programmed (119,040 cycles: 31,250 baud 8N1), the first starting now on an idle line. |
+| `uart_receive(0, data)` | The unpaced path, unchanged: every byte at once, for deliberate overruns. |
+| `midi_loopback(on)` | A cable from MIDI OUT to MIDI IN: each byte UART0 transmits is received at the cycle it finishes. `midi_in` is refused meanwhile. |
+| `midi_state()` | `queued`, `delivered`, `ignored` (receiver held in reset), `looped`, `fifo` (bytes waiting in the receive FIFO), `overruns` (bytes lost to a full FIFO, cumulative), `line_errors` (what LSR would report now; reading this does not clear it), `character_cycles`, `next_cycle`. |
+| `uart_sent(index, since, cycles=True)` | `(bytes, total, cycles)`: each transmitted byte with the cycle its last stop bit ended at. Without `cycles` it returns `(bytes, total)` as before. |
+| `gpio_schedule(bank, pin, high, cycle)` | An external pin level applied at a guest cycle; `gpio_schedule_clear(bank, pin)` drops the ones not yet applied, `gpio_scheduled()` counts them. |
+| `sync_in(bpm, pulses, start=None, per_quarter=2, width_ms=15, active_high=True)` | A pulse train on SYNC IN. Returns the cycle the next pulse would start at: pass it as `start` to carry on at another tempo; schedule nothing more for a clock that stops, or call `sync_in_stop()` to stop one mid-train. |
+| `gpio_trace(since)` | `(rows, total)`: level changes of watched output pins as `bank`, `pin`, `high`, `cycles`. GP7[9] is watched from the start; `gpio_watch(bank, pin)` adds a pin. A pin's first row is the level it drives on becoming an output. |
+
+`Stock.midi_in` is `midi_in` with the input recorded in the run report. The traces keep the latest
+4,096 bytes or changes; read them with `since` often enough.
+
+What the model does and does not claim:
+
+- The MIDI IN sender takes its bit rate from the guest's own divisor and format. A real sender keeps
+  31,250 baud whatever the guest programmed, and a wrong divisor shows as framing errors on the
+  unit; here it shows only as `character_cycles` differing from 119,040. No framing, parity or
+  break error is ever produced, so `line_errors` can only show an overrun.
+- The loopback has no opto-isolator or cable delay: a byte is received in the cycle its
+  transmission ends.
+- SYNC OUT is recorded when GP7[9] is an output and PINMUX17 puts it on its pin (nibble 0 = 8), so
+  firmware that forgets the pin mux shows no pulses. Other watched pins are recorded from the GPIO
+  registers alone. Jack wiring, levels and any buffer between pin and jack are not modelled; if the
+  board inverts SYNC IN, pass `active_high=False`.
+
+**Against the stock firmware.** `tests/stock_midi.py --conditional` runs 3.2.174 with the generated
+drum project and sets CLOCK OUT, OUT/THRU, COMMAND and the clock SOURCE through the firmware's own
+menus. Results at 104 BPM, all in emulation (nothing here was measured on a unit):
+
+- *MIDI IN.* A note on channel 1 (track 1's channel) plays the drum track (rms 0.057) and on a
+  channel no track uses nothing sounds. (Channel 16, the AUTO channel, also played it in a run by
+  hand; the check does not cover that.) A 300-byte SysEx dump
+  followed by a note is received with no overrun and the note plays; the same 300 bytes through
+  `uart_receive` lose 284 to the 16-byte FIFO.
+- *MIDI OUT.* Nothing is sent with the factory settings. With CLOCK OUT on, `0xF8` goes out 24 times
+  per quarter note (9 or 10 audio blocks apart, 2.67 ms each, never further than one block from the
+  nominal spacing), running or stopped; with COMMAND = RX/TX, PLAY sends `0xFA` 8 ms after the key
+  and STOP sends `0xFC`. With OUT/THRU = THRU the jack repeats MIDI IN (a byte's retransmission starts about
+  1 µs after it arrived) and the unit's own clock is not sent.
+- *SYNC OUT.* GP7[9] is driven low at set-up and pulses high twice per quarter note, running or
+  stopped, on audio block boundaries, for 14.3 to 14.9 ms: the firmware ends a pulse on the
+  fifteenth 1 ms tick after it starts. Twelve MIDI clocks go out per pulse, and the clock of a
+  pulse's position is written 3.4 µs before the pin rises.
+- *SYNC IN.* With SOURCE = SYNC the firmware enables the bank 7 interrupt (BINTEN bit 7), and its
+  handler acknowledges every scheduled edge. Sixteen pulses at 140 BPM and then sixteen at 90: the
+  firmware's external-clock tempo (`0xC1501FE8` + 40) reads 139.8 half a second in and 140.0 after
+  two seconds, 89.9 to 90.0 from 0.7 s after the change, and keeps its last reading when the pulses
+  stop.
+- One thing to check on a unit: with POLARITY IN at its default, which the CLOCK page shows as
+  RISE, the firmware arms the *falling* edge of GP7[8] (FAL_TRIG67 bit 24; setting value 0). Either
+  the board inverts SYNC IN between jack and pin or the label is the other way round from the pin.
+  The tempo results above do not depend on it.
+
+These agree with the static findings HW-11, HW-27, HW-31 and HW-41; they do not raise any of them
+to `observed-device`.
 
 ## Backlog
 

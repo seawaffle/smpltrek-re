@@ -3,7 +3,7 @@
 
 void Uart::reset() {
     regs.fill(0); rx.clear(); tx.clear(); shifting.reset(); deadline = UINT64_MAX;
-    line_errors = 0; interrupt_high = false; thre_pending = true;
+    line_errors = 0; interrupt_high = false; thre_pending = true; overruns = 0;
 }
 uint32_t Uart::cause() const {
     static constexpr unsigned thresholds[] = {1, 4, 8, 14};
@@ -39,11 +39,12 @@ void Uart::advance(uint64_t cycle) {
     }
     refresh();
 }
-void Uart::receive(uint8_t value) {
-    if (!(regs[12] & 0x2000)) return;
-    if (rx.size() >= (regs[2] & 1 ? 16u : 1u)) line_errors |= 2;
+bool Uart::receive(uint8_t value) {
+    if (!(regs[12] & 0x2000)) return false;
+    if (rx.size() >= (regs[2] & 1 ? 16u : 1u)) { line_errors |= 2; overruns++; }
     else rx.push_back(value);
     refresh();
+    return true;
 }
 uint32_t Uart::read(uint32_t offset, uint64_t cycle) {
     advance(cycle);

@@ -1,5 +1,5 @@
 /* Exercise the stock panel's browser script without a browser: stream parsing, drawing,
-   audio scheduling and input cleanup. */
+   audio scheduling, MIDI message assembly and input cleanup. */
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -55,14 +55,22 @@ async function main() {
   const status = { cycles: 744000, guest_seconds: 0.002, rate: 1, speed: 1, paused: false, fault: null, notice: null,
     keys: (1n << 23n).toString(16).padStart(12, "0"), pads: new Array(15).fill(0), power_key: false,
     leds: "00".repeat(94) + "09" + "00".repeat(49), display_on: true, frames: 1, audio_lost_words: 0,
-    skipped_cycles: 372000, checkpoints: [], conditional: true, persistent: false };
+    skipped_cycles: 372000, checkpoints: [], conditional: true, persistent: false,
+    midi: { queued: 2, delivered: 7, overruns: 0, sent: 21 } };
+  // MIDI OUT bytes as the guest may send them: running status, a clock inside a message, a SysEx, a
+  // program change, a song position, a stray data byte and a message cut off by the end of the chunk.
+  const midiBytes = new Uint8Array([0x90, 60, 100, 62, 0xf8, 100, 0xf0, 1, 2, 0xf7, 0xc5, 7, 0xfa, 0xf2, 1, 2, 5, 0xb0, 7]);
+  const midiMessages = [], midiInput = { name: "Keys" };
+  const navigator = { requestMIDIAccess: async (options) => ({
+    sysexEnabled: !!(options && options.sysex), inputs: new Map([["in", midiInput]]),
+    outputs: new Map([["out", { name: "Synth", send: (bytes) => midiMessages.push([...bytes]) }]]) }) };
   const audio = new Uint8Array(1 + 4 * 2 * 600);
   const view = new DataView(audio.buffer);
   for (let index = 0; index < 600; index++) {
     view.setInt32(1 + index * 8, 0x40000000, true);      // slot 0: +0.5
     view.setInt32(5 + index * 8, -0x20000000, true);     // slot 1: -0.25
   }
-  const stream = new Uint8Array([...message(3, new TextEncoder().encode(JSON.stringify(status))), ...message(1, frame), ...message(2, audio)]);
+  const stream = new Uint8Array([...message(3, new TextEncoder().encode(JSON.stringify(status))), ...message(1, frame), ...message(2, audio), ...message(4, midiBytes.subarray(0, 5)), ...message(4, midiBytes.subarray(5))]);
   const chunks = [stream.subarray(0, 700), stream.subarray(700, 9000), stream.subarray(9000)];
   const requests = [];
   const started = [];
@@ -78,7 +86,7 @@ async function main() {
   }
   const window = new Element();
   const context = vm.createContext({
-    document, window, console, HTMLInputElement, AudioContext, TextDecoder, setTimeout(callback) { callback(); },
+    document, window, console, navigator, HTMLInputElement, AudioContext, TextDecoder, setTimeout(callback) { callback(); },
     fetch: async (url, options) => {
       if (url === "/stream") {
         return { body: { getReader: () => ({ read: async () => chunks.length ? { value: chunks.shift(), done: false } : new Promise(() => {}) }) } };
@@ -92,6 +100,7 @@ async function main() {
   // Audio must be enabled before the stream's audio message is parsed.
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../ui/stock.js"), "utf8").replace(/\nconnect\(\);\s*$/, "\n"), context);
   document.getElementById("audio").dispatch("click");
+  document.getElementById("midi").dispatch("click");
   await settle();
   vm.runInContext("connect();", context);
   await settle();
@@ -194,6 +203,16 @@ async function main() {
   assert.equal(captured, 2);
   assert.deepEqual(requests.splice(0), [{ type: "power", down: true }, { type: "power", down: false },
     { type: "power", down: true }, { type: "power", down: false }]);
-  console.log("PASS: stream parsing, display decode, audio scheduling, LED lamps, latching, keyboard, knobs and focus-loss release");
+  // MIDI OUT reaches the output as whole messages; a MIDI input's message goes to the emulator as bytes.
+  assert.deepEqual(midiMessages, [[0x90, 60, 100], [0xf8], [0x90, 62, 100], [0xf0, 1, 2, 0xf7], [0xc5, 7], [0xfa], [0xf2, 1, 2]]);
+  assert.equal(document.getElementById("midi-ports").textContent, "In from: Keys. Out to: Synth.");
+  assert.equal(document.getElementById("midi-in").textContent, "7 (+2 queued)");
+  assert.equal(document.getElementById("midi-out").textContent, 21);
+  midiInput.onmidimessage({ data: new Uint8Array([0x99, 36, 127]) });
+  await settle();
+  assert.deepEqual(requests.splice(0), [{ type: "midi", bytes: [0x99, 36, 127] }]);
+  document.getElementById("midi").dispatch("click");
+  assert.equal(midiInput.onmidimessage, null);
+  console.log("PASS: stream parsing, MIDI message assembly, display decode, audio scheduling, LED lamps, latching, keyboard, knobs and focus-loss release");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

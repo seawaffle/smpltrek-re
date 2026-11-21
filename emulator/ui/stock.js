@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const canvas = $("screen");
 const context = canvas.getContext("2d");
 const image = context.createImageData(128, 128);
-const FRAME = 1, AUDIO = 2, STATUS = 3;
+const FRAME = 1, AUDIO = 2, STATUS = 3, MIDI = 4;
 let streamShown = false;
 // Panel units: the instrument is drawn 310 wide, positions are control centres.
 const WIDTH = 310, HEIGHT = 351, TOP = -14;   // y values below are measured on a 365-high drawing
@@ -147,6 +147,69 @@ function volume() {
 }
 $("volume").addEventListener("input", volume);
 
+// ---- MIDI ------------------------------------------------------------------------------
+// Web MIDI inputs feed the emulated MIDI IN jack; the bytes the guest sends on MIDI OUT go to the
+// outputs. An output takes whole messages only, so the byte stream is cut into messages here:
+// running status is filled in, real-time bytes pass at once, a SysEx is sent when its F7 arrives.
+let midiAccess = null, midiStatus = 0, midiData = [], midiSysex = null;
+const MIDI_DATA_BYTES = { 0x80: 2, 0x90: 2, 0xa0: 2, 0xb0: 2, 0xc0: 1, 0xd0: 1, 0xe0: 2, 0xf1: 1, 0xf2: 2, 0xf3: 1, 0xf6: 0 };
+
+function midiEmit(bytes) {
+  if (!midiAccess || (bytes[0] === 0xf0 && !midiAccess.sysexEnabled)) return;
+  midiAccess.outputs.forEach((output) => { try { output.send(bytes); } catch (error) { /* port closed or message refused */ } });
+}
+
+function midiOut(payload) {
+  for (const byte of payload) {
+    if (byte >= 0xf8) { midiEmit([byte]); continue; }
+    if (midiSysex) {
+      if (byte < 0x80) { midiSysex.push(byte); continue; }
+      if (byte === 0xf7) midiEmit([...midiSysex, byte]);
+      midiSysex = null;                                   // any other status byte abandons it
+      if (byte === 0xf7) continue;
+    }
+    if (byte === 0xf0) { midiSysex = [byte]; midiStatus = 0; continue; }
+    if (byte >= 0x80) {
+      const count = MIDI_DATA_BYTES[byte < 0xf0 ? byte & 0xf0 : byte];
+      midiStatus = count ? byte : 0; midiData = [];
+      if (count === 0) midiEmit([byte]);
+      continue;
+    }
+    if (!midiStatus) continue;                            // data with no status to belong to
+    midiData.push(byte);
+    if (midiData.length === MIDI_DATA_BYTES[midiStatus < 0xf0 ? midiStatus & 0xf0 : midiStatus]) {
+      midiEmit([midiStatus, ...midiData]);
+      midiData = [];
+      if (midiStatus >= 0xf0) midiStatus = 0;             // system common messages have no running status
+    }
+  }
+}
+
+function midiPorts() {
+  if (!midiAccess) return;
+  const names = (ports) => [...ports.values()].map((port) => port.name || "unnamed").join(", ") || "none";
+  midiAccess.inputs.forEach((input) => { input.onmidimessage = (event) => send({ type: "midi", bytes: [...event.data] }); });
+  $("midi-ports").textContent = `In from: ${names(midiAccess.inputs)}. Out to: ${names(midiAccess.outputs)}.` +
+    (midiAccess.sysexEnabled ? "" : " System exclusive is not passed (not permitted).");
+}
+
+$("midi").addEventListener("click", async () => {
+  if (midiAccess) {
+    midiAccess.inputs.forEach((input) => { input.onmidimessage = null; });
+    midiAccess.onstatechange = null; midiAccess = null;
+    $("midi").textContent = "Connect MIDI devices"; $("midi-ports").textContent = "Off.";
+    return;
+  }
+  if (!navigator.requestMIDIAccess) { $("midi-ports").textContent = "This browser has no Web MIDI."; return; }
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: true }).catch(() => navigator.requestMIDIAccess());
+  } catch (error) { $("midi-ports").textContent = `MIDI access was refused: ${error.message || error}`; return; }
+  midiStatus = 0; midiData = []; midiSysex = null;
+  midiAccess.onstatechange = midiPorts;
+  midiPorts();
+  $("midi").textContent = "Disconnect MIDI devices";
+});
+
 // ---- status ----------------------------------------------------------------------------
 // Panel LED levels run 0-10. A lamp's colour is the sum of its channels.
 function light(lamp, level) {
@@ -179,6 +242,10 @@ function show(state) {
     streamShown = true;
     $("battery-value").textContent = $("battery").value;
     $("battery-hint").textContent = "The panel MCU reports every pad and this channel (15) continuously, as on the unit.";
+  }
+  if (state.midi) {
+    $("midi-in").textContent = state.midi.delivered + (state.midi.queued ? ` (+${state.midi.queued} queued)` : "");
+    $("midi-out").textContent = state.midi.sent; $("midi-overruns").textContent = state.midi.overruns;
   }
   $("save").disabled = !state.persistent;
   $("save").title = state.persistent ? "" : "Start with --state DIRECTORY to keep the card and flash";
@@ -233,6 +300,7 @@ async function connect() {
           const payload = joined.subarray(offset + 5, offset + 5 + length);
           if (joined[offset] === FRAME) draw(payload);
           else if (joined[offset] === AUDIO) play(payload);
+          else if (joined[offset] === MIDI) midiOut(payload);
           else if (joined[offset] === STATUS) show(JSON.parse(new TextDecoder().decode(payload)));
           offset += 5 + length;
         }
