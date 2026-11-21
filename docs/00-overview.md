@@ -41,6 +41,7 @@ which installs an update from the card even when the installed system does not s
 | [10-cross-flash-button-map](10-cross-flash-button-map.md) | What each SmplTrek button does when the Lofi-12 XT app runs on it |
 | [11-abi](11-abi.md) | The C6000 calling convention as the stock code uses it, for callbacks into the firmware |
 | [12-update-container](12-update-container.md) | The update file format and its seeded CRC-32 integrity fields |
+| [13-palette-swap-howto](13-palette-swap-howto.md) | Step by step for newcomers: putting another product's firmware on a device with `tools/palette_swap.py`, and getting back |
 
 Evidence levels used throughout:
 - **device**: seen on the unit (recorded in [experiments/](../experiments/README.md));

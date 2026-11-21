@@ -11,6 +11,7 @@
   CyDrums seeds hold across 1.1.84 and 2.0.97 beta (2026-11-18). A CyDrums 1.1.84 image sealed for the SmplTrek
   (sterilised as well, not a plain palette swap) ran on a unit in session C5 (2026-11-20); nothing has been
   flashed to a CyDrums or a Lofi-12 XT.
+  Step-by-step guide for newcomers: `../docs/13-palette-swap-howto.md`.
   Tests: `python3 -B -m unittest discover -s tools -p "test_palette*.py"`
 - `sonicware_integrity.py` — descriptor-based modern-container parser and recovered
   IEEE CRC-32 verifier. Validated across all eight SmplTrek and three Lofi-12 XT

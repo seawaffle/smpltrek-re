@@ -24,6 +24,7 @@ own settings blocks; the unit was then restored to stock. **CyDrums 1.1.84, ster
 a SmplTrek**, with its card content and working audio (device session C5, 2026-11-20, operator report,
 [experiments/sessions/C5-crossflash-cydrums.md](experiments/sessions/C5-crossflash-cydrums.md)). CyDrums 2.0.97 beta
 and the directions onto a Lofi-12 XT or a CyDrums are checked offline but have not run on a unit.
+Step-by-step instructions for the tool: [docs/13-palette-swap-howto.md](docs/13-palette-swap-howto.md).
 
 ## Start here
 
