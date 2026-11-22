@@ -3055,7 +3055,55 @@ int c6_usb_host_stats(void *handle, uint64_t *fields) {
         fields[8] = host.frame; fields[9] = host.suspended; fields[10] = host.naks + usb.parked_naks(m->cycles); fields[11] = host.stalls;
         fields[12] = host.errors; fields[13] = host.toggle_errors; fields[14] = host.transfers; fields[15] = host.queue.size();
         fields[16] = usb.fifo_overflows; fields[17] = usb.fifo_underflows; fields[18] = usb.wrapper_control();
-        fields[19] = usb.connected();
+        fields[19] = usb.connected(); fields[20] = usb.iso_errors(); fields[21] = usb.iso_missed();
+        fields[22] = usb.iso_underruns; fields[23] = usb.iso_overruns;
+    });
+}
+int c6_usb_iso_out(void *handle, uint32_t endpoint, const uint8_t *data, const uint32_t *sizes, uint32_t count) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        for (uint32_t i = 0; i < count; i++) if (sizes[i] > 1023) throw std::runtime_error("a full-speed isochronous packet is at most 1023 bytes");
+        for (uint32_t i = 0; i < count; data += sizes[i], i++)
+            m->board.usb.iso_queue(endpoint, std::vector<uint8_t>(data, data + sizes[i]), m->cycles);
+    });
+}
+int c6_usb_iso_in(void *handle, uint32_t endpoint, uint32_t frames, uint32_t max_packet, uint32_t short_below) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.usb.iso_request(endpoint, frames, max_packet, short_below, m->cycles);
+    });
+}
+int c6_usb_iso_stop(void *handle, uint32_t address) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.usb.iso_stop(address, m->cycles);
+    });
+}
+int c6_usb_iso_read(void *handle, uint32_t endpoint, uint64_t *rows, uint32_t row_capacity, uint8_t *data, uint32_t capacity, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.advance(m->cycles);
+        auto &usb = m->board.usb;
+        uint64_t copied = 0, bytes = 0;
+        const auto &waiting = usb.iso(endpoint | 0x80).in;
+        while (copied < row_capacity && !waiting.empty() && bytes + waiting.front().data.size() <= capacity) {
+            Usb::IsoPacket packet; usb.iso_take(endpoint, packet);
+            rows[copied * 3] = uint64_t(packet.status) << 16 | packet.frame; rows[copied * 3 + 1] = packet.cycle;
+            rows[copied * 3 + 2] = packet.data.size();
+            std::copy(packet.data.begin(), packet.data.end(), data + bytes);
+            bytes += packet.data.size(); copied++;
+        }
+        fields[0] = copied; fields[1] = bytes; fields[2] = waiting.size();
+    });
+}
+int c6_usb_iso_stats(void *handle, uint32_t address, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.advance(m->cycles);
+        const auto &stream = m->board.usb.iso(address);
+        fields[0] = address & 0x80 ? stream.frames : stream.out.size(); fields[1] = stream.done; fields[2] = stream.packets;
+        fields[3] = stream.bytes; fields[4] = stream.missed; fields[5] = stream.shorts; fields[6] = stream.errors;
+        fields[7] = stream.in.size(); fields[8] = stream.dropped;
     });
 }
 int c6_usb_endpoint(void *handle, uint32_t number, uint64_t *fields) {
@@ -3064,7 +3112,7 @@ int c6_usb_endpoint(void *handle, uint32_t number, uint64_t *fields) {
         const auto &e = m->board.usb.endpoint(number);
         fields[0] = e.txmaxp; fields[1] = e.rxmaxp; fields[2] = e.txsz; fields[3] = e.rxsz; fields[4] = e.txadd; fields[5] = e.rxadd;
         fields[6] = e.tx_packets; fields[7] = e.rx_packets; fields[8] = e.tx_stall; fields[9] = e.rx_stall;
-        fields[10] = e.txcsrh; fields[11] = e.rxcsrh;
+        fields[10] = e.txcsrh; fields[11] = e.rxcsrh; fields[12] = e.tx_underrun; fields[13] = e.rx_overrun;
     });
 }
 int c6_usb_reserved_status_stats(void *handle, uint64_t *fields) {

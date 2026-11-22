@@ -96,7 +96,7 @@ Not modelled, or modelled from assumption:
 - the panel MCU beyond its analogue report stream: no `A1` version reply, no jitter or bursts, an
   untouched pad reads 0 (0 to 4 on the unit);
 - SD erase, high speed, SDIO and hot-plug; NOR program/erase timing and the part number; USB
-  isochronous and DMA traffic, high speed and host mode; DMA accesses to reserved memory; cache timing;
+  DMA traffic, high speed and host mode; DMA accesses to reserved memory; cache timing;
 - the places where the model continues with an unmeasured value, listed in
   [What the model assumes without stopping](#what-the-model-assumes-without-stopping).
 
@@ -224,6 +224,8 @@ distinct signs and the 2:1 level ratio. Stock's monitor output is silent in that
 3.2.174; what it drives and what it found are under [MIDI and SYNC](#midi-and-sync-2026-11-20).
 `python3 -B emulator/tests/stock_usb.py --conditional` plugs a host into 3.2.174, enumerates it and
 exchanges USB MIDI ([USB device](#usb-device-and-scripted-host-2026-11-20)).
+`python3 -B emulator/tests/stock_usb_audio.py --conditional` streams USB audio both ways with 3.2.174
+(same section, "Isochronous streams").
 
 `python3 -B emulator/tests/stock_survey.py --conditional` repeats the start-up survey above as a
 regression check: all thirteen SmplTrek, Lofi-12 XT and CyDrums updates, each with no card and with a blank
@@ -999,6 +1001,10 @@ identical with fast-forward or without. From Python (`cpu.py`):
 | `usb_control(setup, data_or_length)` | SETUP, data stage, status stage. `setup` is the 8 bytes, or `(bmRequestType, bRequest, wValue, wIndex)` with wLength taken from the data or length. Returns a result (below); a STALL in any stage gives `status == "stall"`. |
 | `usb_out(ep, data)`, `usb_in(ep, max_length)` | Bulk or interrupt transfers in packets of the endpoint's size, retried while the device answers NAK. `usb_in` ends at `max_length` bytes or a short packet. |
 | `usb_enumerate(address=1)` | Waits for the port, then: 8 bytes of the device descriptor, SET_ADDRESS, the device descriptor, the configuration descriptor (9 bytes, then all of it), SET_CONFIGURATION. Returns the descriptors, vendor, product, the endpoints found and each step's result; raises `UsbError` if a step fails. Later transfers use the packet sizes it read. |
+| `usb_set_interface(interface, alternate)` | SET_INTERFACE, as a host does to open (1) or close (0) an audio streaming interface. Any other request goes through `usb_control`. |
+| `usb_iso_stream_out(ep, packets)` | Queue payloads for an isochronous OUT endpoint, one packet per frame. See "Isochronous streams" below. |
+| `usb_iso_stream_in(ep, frames)`, `usb_iso_collect(ep)` | Ask an isochronous IN endpoint for a packet in each of the next frames; returns them with their frame numbers. |
+| `usb_iso_state(ep)`, `usb_iso_stop(ep)` | One stream's counts; drop what is queued. |
 | `usb_state()` | `port` (`detached`, `powered`, `debounce`, `reset`, `enabled`), `address` and `configuration` (the host's), `device_address` (what the controller answers to), `naks`, `stalls`, `errors`, `toggle_errors`, `bus_resets`, `sofs`, `frame`, `suspended`, `interrupt_mode`, `fifo_overflows`, `fifo_underflows`, and for each of endpoints 1 to 4 its packet sizes, FIFO placement, waiting packets and stall state. |
 
 Every transfer call takes `timeout_ms` (default 1000, in guest time) and `wait`. With `wait=True`
@@ -1047,6 +1053,54 @@ SET_ADDRESS the host waits 2 ms.
 - CFGCHIP2: USB0PHYCLKGD 64 cycles after the PLL is switched on (a functional delay, not a measured
   lock time) and USB0VBUSSENSE while the cable is in.
 
+**Isochronous streams (2026-11-21).** An endpoint direction whose ISO bit is set (TXCSR or RXCSR
+bit 14) is served by streams instead of transfers. Each 1 ms frame, right after the SOF, the host
+goes through endpoints 1 to 4 in order: one OUT packet if the endpoint has payloads queued, then one
+IN token if frames were asked for. There are no handshakes, no retries and no data toggles, so
+nothing here adds to `naks` or `toggle_errors`.
+
+- `usb_iso_stream_out(ep, packets, wait=False)` queues one payload per frame (0 to 1023 bytes each;
+  an empty one is a zero-length packet) behind any still queued. A frame with nothing queued carries
+  no packet. It returns `usb_iso_state(ep)`.
+- `usb_iso_stream_in(ep, frames, wait=True, max_packet=None, short_below=0)` sends an IN token in
+  each of the next `frames` frames and returns one row per token: `frame` (the SOF's frame number,
+  as FRAME reads it), `cycles` (when the transaction ended), `data` and `status`: `data`, `empty` (a
+  zero-length packet) or `error`. With `wait=False`, fetch the rows later with `usb_iso_collect(ep)`.
+- `usb_iso_state(ep)` (address with bit 7 for IN) gives `queued`, `sent`, `packets`, `bytes`,
+  `missed`, `short`, `errors`, `waiting` and `dropped`. For OUT, `missed` are packets lost because
+  the FIFO was full and `errors` packets the device could not take at all (not listening, the
+  endpoint not isochronous, or the packet above RXMAXP or the FIFO). For IN, `missed` are
+  zero-length answers, `short` data packets under `short_below` bytes, and `errors` tokens with no
+  answer (not listening, or the endpoint not isochronous) or with a packet above `max_packet`.
+- `usb_state()` adds `iso_errors` and `iso_missed` (the streams' sums), `iso_underruns` and
+  `iso_overruns` (how often the device set UNDERRUN or OVERRUN), and `tx_underrun` / `rx_overrun`
+  per endpoint. A zero-length packet the firmware loaded on purpose counts as `missed` at the host
+  but is no underrun.
+- `usb_sof(False)`, a bus reset or unplugging stops the streams; the last two also empty them.
+  `usb_out` and `usb_in` refuse an isochronous endpoint.
+
+What the device does, from SPRUH79C 33.2.7.1.4:
+
+- *OUT.* With room in the FIFO the packet is stored, RXPKTRDY is set and the endpoint interrupt is
+  raised, as for bulk. With no room the packet is lost and OVERRUN (RXCSR bit 2) is set until
+  software writes it 0. Double packet buffering holds two.
+- *IN.* A loaded packet is sent; TXPKTRDY clears and the interrupt is raised at the end of the data
+  packet. With nothing loaded the device sends a zero-length packet and sets UNDERRUN (TXCSR bit 2).
+  SENDSTALL has no effect.
+- *POWER.ISOUPDATE.* A packet loaded into an isochronous IN FIFO is held back until the next SOF;
+  an IN token before that gets a zero-length packet, with no UNDERRUN.
+- *SOF.* INTRUSB SOF is latched every millisecond from the end of bus reset, configured or not, and
+  FRAME holds that SOF's number, so a handler can pace its packets on it.
+
+Timing: an OUT packet of n bytes ends 78 + 8n bit times after the SOF (or after the transaction
+before it in the frame); an IN token ends 39 bit times after, and its data packet 39 + 8n more. For
+48 kHz stereo at 192 bytes that puts the OUT packet in the FIFO 0.13 ms into the frame.
+
+Two things the manual leaves open, and how the model reads them: UNDERRUN and OVERRUN raise no
+interrupt of their own (firmware must not wait for one), and DATAERROR and PID_ERROR are never set
+because the cable has no bit errors. The streams are not scheduled around a control or bulk transfer
+that is under way at the SOF; both happen at their own cycles.
+
 **Which interrupt registers to read (CTRLR.UINT).** SPRUH79C says this much:
 
 - UINT = 0 ("PDR interrupt handler enabled", the reset state): status is in INTSRCR, or INTMASKEDR
@@ -1090,9 +1144,11 @@ either.
 
 **Limits.**
 
-- Full speed only, control, bulk and interrupt transfers. An endpoint's ISO bit is held and the
-  host refuses transfers to it; USB audio is not carried. DMAEN faults: CPPI DMA has set-up
-  registers only, so the stock card-reader mode (mass storage over DMA) cannot run.
+- Full speed only. DMAEN faults: CPPI DMA has set-up registers only, so the stock card-reader mode
+  (mass storage over DMA) cannot run.
+- An isochronous stream carries exactly what the test queued, one packet a frame. The host does
+  not adapt its rate, and its clock is the guest's, so host and device cannot drift apart: rate
+  matching (an asynchronous IN endpoint's varying packet sizes, the stock PLL trim) is not exercised.
 - The host is one device on a root port: no hub, one transfer at a time in the order queued, no
   frame scheduling around the SOF, no bit errors, no retries after a missing handshake (the transfer
   ends as `error`). Its timings (100 ms debounce, 10 ms reset, 10 ms recovery) are fixed.
@@ -1128,7 +1184,29 @@ menus. Results, all in emulation (nothing here was measured on a unit):
   where its DIN jack keeps sending `0xF8` ([MIDI and SYNC](#midi-and-sync-2026-11-20)); with the
   factory settings endpoint `0x83` stays silent.
 
-These agree with the static findings HW-12 and HW-18; they do not raise either to
+`tests/stock_usb_audio.py --conditional` then opens the two audio streaming interfaces and streams
+both ways (emulation only, like the rest):
+
+- *Interfaces.* GET_INTERFACE answers 0; SET_INTERFACE 1 succeeds on interfaces 1 and 2 and
+  GET_INTERFACE then answers 1. The firmware makes endpoint 1 an isochronous OUT endpoint and
+  endpoint 2 an isochronous IN endpoint of 196 bytes, each when its own interface is opened, and
+  uses FIFO access (no DMA).
+- *OUT.* 13,600 packets of 192 bytes (a 1 kHz tone, 48 kHz 16-bit stereo), one per frame: all
+  stored, no OVERRUN. The tone is silent until the USB AUDIO track is switched on with its pad
+  (panel channel 12 on the home screen) and then reaches the line output at unity (amplitude 0.3661
+  for 12000 / 32768). With the track on and no more packets, the output keeps repeating the last
+  128-frame block, as HW-40 describes. A second pad press switches it off.
+- *IN.* The firmware answers every frame with a 192-byte packet, after one zero-length packet that
+  it loads itself when the interface opens; there is no UNDERRUN. The packets carry the mix: the
+  tone comes back at the same level.
+- *Trim.* While a streaming interface is open TIMER64P1 runs as a 64-bit counter (TGCR `0x13`,
+  both periods all ones) at exactly 24,000,000 counts a second, and stops when both interfaces are
+  back at 0. In 12 s of streaming the firmware does not write the codec at all: with the emulator's
+  one exact clock there is nothing to correct, so the trim arithmetic itself is not exercised.
+- *After closing.* Endpoint 2 stays isochronous at alternate setting 0: further IN tokens get one
+  left-over packet, then zero-length packets with UNDERRUN (recorded, not judged).
+
+These agree with the static findings HW-12, HW-18 and HW-40; they do not raise any of them to
 `observed-device`.
 
 ## Backlog

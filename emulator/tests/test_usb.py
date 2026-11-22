@@ -698,6 +698,191 @@ class UsbHost(unittest.TestCase):
             self.assertEqual(self.get(cpu, BASE + 0x20), 1 << 17 | EP0)   # RESUME, then the SETUP
             self.assertEqual(self.get(cpu, BASE + 0x401, 1), 0x40)
 
+    # Isochronous streams. plugged() returns at the cycle of an SOF, so the next SOFs are whole frames away;
+    # after each, endpoint 1's OUT packet comes first, then endpoint 2's IN token.
+    OUT_END = (4 + 35 + 4 + 35 + 8 * 192) * BIT                           # token, 192 data bytes
+    IN_TOKEN = (4 + 35) * BIT
+
+    def audio(self, cpu, rx=(0x15, 8, 196), tx=(0x05, 72, 196)):
+        """Endpoint 1 isochronous OUT (two 256-byte packets at 64) and endpoint 2 isochronous IN (one at 576)."""
+        self.configure(cpu, 1, rx=rx)
+        self.put(cpu, BASE + 0x517, 0x40, 1)                              # RXCSR.ISO
+        self.configure(cpu, 2, tx=tx)
+        self.put(cpu, BASE + 0x523, 0x60, 1)                              # TXCSR.ISO, MODE
+
+    def test_isochronous_out_is_one_packet_a_frame_with_no_retry_and_overrun_when_full(self):
+        RX1 = 1 << 9
+        packets = [bytes([index]) * 192 for index in range(1, 6)]
+        with self.plugged(sof=True) as cpu:
+            self.audio(cpu)
+            state = cpu.usb_state()["endpoints"][0]
+            self.assertEqual((state["rx_iso"], state["rx_fifo"]), (True, dict(address=64, packet=256, packets=2)))
+            with self.assertRaisesRegex(ValueError, "isochronous"):
+                cpu.usb_out(1, b"bulk", wait=False)
+            self.assertEqual(cpu.usb_iso_stream_out(1, packets[:4])["queued"], 4)
+            cpu.run(FRAME + self.OUT_END - 1)
+            self.assertEqual(cpu.usb_state()["endpoints"][0]["rx_packets"], 0)
+            cpu.run(1)                                                    # the packet's last bit
+            self.assertEqual(cpu.usb_state()["endpoints"][0]["rx_packets"], 1)
+            self.assertTrue(self.acknowledge(cpu) & RX1)
+            self.assertEqual((self.get(cpu, BASE + 0x516, 1), self.get(cpu, BASE + 0x518, 2)), (0x01, 192))
+            self.assertEqual(self.unload(cpu, 1, (4,) * 48), packets[0])
+            self.put(cpu, BASE + 0x516, 0, 1)                             # RXPKTRDY cleared
+            # Left alone, the next two fill both halves of the FIFO and the fourth is lost for good.
+            cpu.run(2 * FRAME)
+            self.assertEqual(self.get(cpu, BASE + 0x516, 1), 0x03)        # RXPKTRDY, FIFOFULL
+            cpu.run(FRAME)
+            self.assertEqual(self.get(cpu, BASE + 0x516, 1), 0x07)        # and OVERRUN
+            self.assertEqual(cpu.usb_iso_state(1), dict(queued=0, sent=4, packets=3, bytes=576, missed=1, short=0,
+                                                        errors=0, waiting=0, dropped=0))
+            state = cpu.usb_state()
+            self.assertEqual((state["iso_missed"], state["iso_overruns"], state["iso_errors"], state["naks"]), (1, 1, 0, 0))
+            self.assertTrue(state["endpoints"][0]["rx_overrun"])
+            self.put(cpu, BASE + 0x516, 0x01, 1)                          # OVERRUN cleared, the packet kept
+            self.assertEqual(self.get(cpu, BASE + 0x516, 1), 0x03)
+            self.acknowledge(cpu)
+            self.assertEqual(self.unload(cpu, 1, (4,) * 48), packets[1])
+            self.put(cpu, BASE + 0x516, 0, 1)
+            self.assertTrue(self.acknowledge(cpu) & RX1)                  # the interrupt for the one behind it
+            self.assertEqual(self.unload(cpu, 1, (1,) * 192), packets[2])
+            self.put(cpu, BASE + 0x516, 0, 1)
+            cpu.run(3 * FRAME)                                            # nothing queued: no packets, and no fourth
+            self.assertEqual((self.get(cpu, BASE + 0x516, 1), cpu.usb_iso_state(1)["sent"]), (0, 4))
+
+            # A zero-length packet is a packet; wait=True runs the guest until the queue is out.
+            sofs = cpu.usb_state()["sofs"]
+            self.assertEqual(cpu.usb_iso_stream_out(1, [b"", packets[4]], wait=True)["packets"], 5)
+            self.assertEqual(cpu.usb_state()["sofs"], sofs + 3)
+            self.assertEqual((self.get(cpu, BASE + 0x516, 1), self.get(cpu, BASE + 0x518, 2)), (0x03, 0))
+            self.put(cpu, BASE + 0x516, 0, 1)
+            self.assertEqual(self.unload(cpu, 1, (2,) * 96), packets[4])
+            self.put(cpu, BASE + 0x516, 0, 1)
+
+            # What the device cannot take is an error, not a lost frame: a packet above RXMAXP, and any
+            # packet while the endpoint is not isochronous or the device is at another address.
+            cpu.usb_iso_stream_out(1, [bytes(197)], wait=True)
+            self.put(cpu, BASE + 0x517, 0, 1)
+            cpu.usb_iso_stream_out(1, [bytes(8)], wait=True)
+            self.put(cpu, BASE + 0x517, 0x40, 1)
+            self.put(cpu, BASE + 0x400, 5, 1)
+            cpu.usb_iso_stream_out(1, [bytes(8)], wait=True)
+            self.put(cpu, BASE + 0x400, 0, 1)
+            state = cpu.usb_iso_state(1)
+            self.assertEqual((state["sent"], state["packets"], state["missed"], state["errors"]), (9, 5, 1, 3))
+            self.assertEqual((cpu.usb_state()["iso_errors"], self.get(cpu, BASE + 0x516, 1)), (3, 0))
+            # A bus reset ends the stream.
+            cpu.usb_iso_stream_out(1, packets)
+            cpu.usb_reset()
+            self.assertEqual(cpu.usb_iso_state(1)["queued"], 0)
+            with self.assertRaisesRegex(ValueError, "enabled port"):
+                cpu.usb_iso_stream_out(1, packets)
+
+    def test_isochronous_in_sends_what_is_loaded_or_a_zero_length_packet_with_underrun(self):
+        TX2 = 1 << 2
+        data = bytes(range(192))
+        with self.plugged(sof=True) as cpu:
+            self.audio(cpu)
+            start = cpu.cycles()
+            self.assertIsNone(cpu.usb_iso_stream_in(0x82, 4, wait=False, max_packet=196, short_below=192))
+            # Frame 1: nothing loaded. A zero-length packet, UNDERRUN, no interrupt and no NAK.
+            cpu.run(FRAME + self.IN_TOKEN - 1)
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0)
+            cpu.run(1)
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0x04)
+            cpu.run(FRAME // 2)
+            frame = self.get(cpu, BASE + 0x40c, 2)
+            self.assertEqual(cpu.usb_iso_collect(0x82), [dict(frame=frame, status="empty", data=b"",
+                                                              cycles=start + FRAME + self.IN_TOKEN + (4 + 35) * BIT)])
+            self.assertFalse(self.acknowledge(cpu) & TX2)
+            # Frame 2: a packet loaded in time is sent whole; TXPKTRDY drops and the interrupt comes at its end.
+            self.load(cpu, 2, data, (4,) * 48)
+            self.put(cpu, BASE + 0x522, 0x01, 1)                          # TXPKTRDY; written 0, UNDERRUN clears
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0x03)
+            sent = start + 2 * FRAME + self.IN_TOKEN + (4 + 35 + 8 * 192) * BIT
+            cpu.run(sent - 1 - cpu.cycles())
+            self.assertEqual((self.get(cpu, BASE + 0x522, 1), self.acknowledge(cpu) & TX2), (0x03, 0))
+            cpu.run(1)
+            self.assertEqual((self.get(cpu, BASE + 0x522, 1), self.acknowledge(cpu) & TX2), (0, TX2))
+            self.assertEqual(cpu.usb_iso_collect(0x82), [dict(frame=frame + 1, status="data", data=data, cycles=sent)])
+            # Frame 3: a zero-length packet the firmware loaded looks the same to the host, but it is no
+            # underrun and it is followed by the interrupt. Frame 4: a packet under short_below.
+            self.put(cpu, BASE + 0x522, 0x01, 1)
+            cpu.run(start + 3 * FRAME + FRAME // 2 - cpu.cycles())
+            self.assertEqual((self.get(cpu, BASE + 0x522, 1), self.acknowledge(cpu) & TX2), (0, TX2))
+            self.load(cpu, 2, data[:188], (4,) * 47)
+            self.put(cpu, BASE + 0x522, 0x01, 1)
+            cpu.run(FRAME)
+            self.assertEqual([(row["frame"] - frame, row["status"], len(row["data"])) for row in cpu.usb_iso_collect(0x82)],
+                             [(2, "empty", 0), (3, "data", 188)])
+            self.assertEqual(cpu.usb_iso_state(0x82), dict(queued=0, sent=4, packets=2, bytes=380, missed=2, short=1,
+                                                           errors=0, waiting=0, dropped=0))
+            state = cpu.usb_state()
+            self.assertEqual((state["iso_missed"], state["iso_underruns"], state["iso_errors"], state["naks"]), (2, 1, 0, 0))
+            cpu.run(2 * FRAME)                                            # no frames asked for: no tokens, no underrun
+            self.assertEqual((self.get(cpu, BASE + 0x522, 1), cpu.usb_iso_state(0x82)["sent"]), (0, 4))
+
+            # wait=True runs the frames and returns them. A packet above max_packet is an error, as is any
+            # token while the endpoint is not isochronous.
+            self.load(cpu, 2, data[:100], (4,) * 25)
+            self.put(cpu, BASE + 0x522, 0x01, 1)
+            self.assertEqual([row["status"] for row in cpu.usb_iso_stream_in(0x82, 1, max_packet=64)], ["error"])
+            self.put(cpu, BASE + 0x523, 0x20, 1)
+            self.assertEqual([row["status"] for row in cpu.usb_iso_stream_in(0x82, 2)], ["error", "error"])
+            self.put(cpu, BASE + 0x523, 0x60, 1)
+            self.assertEqual((cpu.usb_iso_state(0x82)["errors"], cpu.usb_state()["iso_errors"]), (3, 3))
+
+    def test_isoupdate_holds_a_packet_until_the_next_sof_and_double_buffering_sends_one_a_frame(self):
+        def first_frames(power):
+            with self.plugged(sof=True) as cpu:
+                self.audio(cpu, tx=(0x15, 72, 196))                       # two packets
+                self.put(cpu, BASE + 0x401, power, 1)
+                cpu.usb_iso_stream_in(0x82, 3, wait=False)
+                cpu.run(FRAME + 1)                                        # just after the SOF, before the IN token
+                for fill in (1, 2):
+                    self.load(cpu, 2, bytes([fill]) * 8, (4, 4))
+                    self.put(cpu, BASE + 0x522, 0x01, 1)
+                self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0x03)    # both halves loaded
+                cpu.run(3 * FRAME)
+                return [row["data"][:1] for row in cpu.usb_iso_collect(0x82)], cpu.usb_state()["iso_underruns"]
+        self.assertEqual(first_frames(0x40), ([b"\x01", b"\x02", b""], 1))
+        # ISOUPDATE: neither goes out in the frame it was loaded in, and that zero-length packet is no underrun.
+        self.assertEqual(first_frames(0xc0), ([b"", b"\x01", b"\x02"], 0))
+
+    def test_streams_run_beside_a_bulk_transfer_and_fast_forward_changes_nothing(self):
+        def script(fast_forward):
+            with self.plugged(sof=True) as cpu:
+                cpu.fast_forward(fast_forward)
+                self.audio(cpu)
+                self.configure(cpu, 3, rx=(3, 104, 64))
+                rows = []
+                cpu.usb_iso_stream_out(1, [bytes([index]) * 192 for index in range(8)])
+                cpu.usb_iso_stream_in(0x82, 8, wait=False)
+                bulk = cpu.usb_out(3, bytes(range(40)), wait=False)
+                cpu.run(FRAME // 2)
+                for index in range(8):                                    # the firmware's turn, in the middle of each frame
+                    self.load(cpu, 2, bytes([0x80 | index]) * 192, (4,) * 48)
+                    self.put(cpu, BASE + 0x522, 0x01, 1)
+                    cpu.run(FRAME)
+                    rows.append((self.acknowledge(cpu), self.get(cpu, BASE + 0x40c, 2), self.get(cpu, BASE + 0x518, 2)))
+                    self.unload(cpu, 1, (4,) * 48)
+                    self.put(cpu, BASE + 0x516, 0, 1)
+                rows.append(self.finished(cpu, bulk))
+                rows.append(cpu.usb_iso_collect(0x82))
+                rows.append((cpu.usb_iso_state(1), cpu.usb_iso_state(0x82)))
+                rows.append({name: value for name, value in cpu.usb_state().items() if name != "reserved_status"})
+                return rows
+        fast, slow = script(True), script(False)
+        self.assertEqual(fast, slow)
+        self.assertEqual([row[2] for row in fast[:8]], [192] * 8)
+        self.assertEqual([row[1] - fast[0][1] for row in fast[:8]], list(range(8)))   # FRAME counts the SOFs
+        self.assertTrue(all(row[0] & SOF_IRQ for row in fast[:8]))
+        self.assertEqual(fast[8]["status"], "ok")
+        self.assertEqual([(row["status"], row["data"]) for row in fast[9]],
+                         [("data", bytes([0x80 | index]) * 192) for index in range(8)])
+        self.assertEqual([row["frame"] for row in fast[9]], [row[1] for row in fast[:8]])
+        self.assertEqual((fast[10][0]["packets"], fast[10][0]["missed"], fast[10][1]["packets"], fast[10][1]["missed"]), (8, 0, 8, 0))
+        self.assertEqual((fast[11]["iso_errors"], fast[11]["toggle_errors"], fast[11]["errors"]), (0, 0, 0))
+
     def test_soft_disconnect_and_bus_reset_end_a_transfer_and_fast_forward_changes_nothing(self):
         def script(fast_forward):
             with self.device() as cpu:

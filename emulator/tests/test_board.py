@@ -1596,6 +1596,34 @@ class Board(unittest.TestCase):
             cpu.run(500)
             self.assertEqual(self.get(cpu, 0x01c20010), counter)
 
+    def test_timer_64_bit_mode_counts_through_both_halves_and_matches_the_64_bit_period(self):
+        with self.machine() as cpu:
+            # As the stock firmware runs TIMER64P1 while USB audio streams: TGCR 0x13, both periods all ones.
+            for offset, value in ((0x18, 0xffffffff), (0x1c, 0xffffffff), (0x24, 0x13), (0x10, 0xfffffffe), (0x20, 0x80)):
+                self.put(cpu, 0x01c21000 + offset, value)
+            cpu.run(31 * 3)                                               # 6 ticks of 24 MHz
+            self.assertEqual((self.get(cpu, 0x01c21010), self.get(cpu, 0x01c21014)), (4, 1))
+            cpu.run(31 * 12000000)
+            self.assertEqual((self.get(cpu, 0x01c21010), self.get(cpu, 0x01c21014)), (24000004, 1))
+            self.assertEqual(cpu.state()["registers"]["ifr"], 0)
+            self.put(cpu, 0x01c21020, 0)                                  # disabled: the count stays
+            cpu.run(500)
+            self.assertEqual(self.get(cpu, 0x01c21010), 24000004)
+            self.put(cpu, 0x01c21024, 0)                                  # both halves in reset
+            self.assertEqual((self.get(cpu, 0x01c21010), self.get(cpu, 0x01c21014)), (0, 0))
+        with self.machine() as cpu:
+            # A period across both halves on timer 0: the event at the match, then from zero again.
+            for offset, value in ((0x18, 3), (0x1c, 1), (0x24, 0x03), (0x10, 0xfffffffe), (0x20, 0x80)):
+                self.put(cpu, 0x01c20000 + offset, value)
+            cpu.run(77)                                                   # 4 of the 5 ticks to 0x1_00000003
+            self.assertEqual(((self.get(cpu, 0x01c20010), self.get(cpu, 0x01c20014)), cpu.state()["registers"]["ifr"]), ((2, 1), 0))
+            cpu.run(1)
+            self.assertEqual(cpu.state()["registers"]["ifr"], 1 << 4)
+            cpu.run(31)
+            self.assertEqual((self.get(cpu, 0x01c20010), self.get(cpu, 0x01c20014)), (1, 0))
+            with self.assertRaisesRegex(ValueError, "not implemented"):
+                self.put(cpu, 0x01c20024, 0x0b)                           # the chained mode is still not modelled
+
     def test_each_timer_raises_its_own_event(self):
         # DSP event numbers of the C6748: T64P0_TINT12 4, T64P1_TINT12 40, T64P2_TINTALL 25, T64P3_TINTALL 86.
         for base, number in ((0x01c20000, 4), (0x01c21000, 40), (0x01f0c000, 25), (0x01f0d000, 86)):

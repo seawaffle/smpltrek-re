@@ -75,6 +75,11 @@ class CPU:
             "usb_transfer": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64), C.c_void_p, C.c_uint32]),
             "usb_run": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint64]),
             "usb_host_stats": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint64)]),
+            "usb_iso_out": (C.c_int, [C.c_void_p, C.c_uint32, C.c_void_p, C.POINTER(C.c_uint32), C.c_uint32]),
+            "usb_iso_in": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32, C.c_uint32, C.c_uint32]),
+            "usb_iso_stop": (C.c_int, [C.c_void_p, C.c_uint32]),
+            "usb_iso_read": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64), C.c_uint32, C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64)]),
+            "usb_iso_stats": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64)]),
             "usb_endpoint": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64)]),
             "usb_reserved_status_read": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64)]),
             "gpio_input": (C.c_int, [C.c_void_p, C.c_uint32, C.c_uint32, C.c_uint32]),
@@ -131,6 +136,7 @@ class CPU:
         self._state = State()
         self.regions = []
         self.usb_ep0_packet, self.usb_packets, self.usb_interfaces, self.usb_setups = 64, {}, {}, {}
+        self.usb_iso_packets = {}
         self.artifacts = []
         self.decode_enabled = decode
 
@@ -437,21 +443,24 @@ class CPU:
         SET_ADDRESS and SET_CONFIGURATION last succeeded with); `device_address` is the address the controller
         answers to. `naks`, `stalls`, `errors` (no answer, or a packet that broke the protocol) and
         `toggle_errors` (a packet dropped as a repeat because its DATA0/DATA1 did not alternate) count since
-        the board was enabled. Reading this changes nothing."""
+        the board was enabled. `iso_errors` and `iso_missed` sum the isochronous streams' counts
+        (usb_iso_state); `iso_underruns` and `iso_overruns` count how often the device set UNDERRUN or
+        OVERRUN. Reading this changes nothing."""
         self.ensure_open()
         fields = (C.c_uint64 * 6)()
         self.checked(self.lib.c6_usb_stats(self.handle, fields))
-        host = (C.c_uint64 * 20)()
+        host = (C.c_uint64 * 24)()
         self.checked(self.lib.c6_usb_host_stats(self.handle, host))
         endpoints = []
         for number in range(1, 5):
-            row = (C.c_uint64 * 12)()
+            row = (C.c_uint64 * 14)()
             self.checked(self.lib.c6_usb_endpoint(self.handle, number, row))
             fifo = lambda size, address: dict(address=address * 8, packet=8 << (size & 15), packets=2 if size & 16 else 1)
             endpoints.append(dict(number=number, tx_max_packet=row[0], rx_max_packet=row[1],
                                   tx_fifo=fifo(row[2], row[4]), rx_fifo=fifo(row[3], row[5]),
                                   tx_packets=row[6], rx_packets=row[7], tx_stall=bool(row[8]), rx_stall=bool(row[9]),
-                                  tx_iso=bool(row[10] & 0x40), rx_iso=bool(row[11] & 0x40)))
+                                  tx_iso=bool(row[10] & 0x40), rx_iso=bool(row[11] & 0x40),
+                                  tx_underrun=bool(row[12]), rx_overrun=bool(row[13])))
         return dict(profile="USB0 peripheral with a scripted full-speed host", cable_connected=bool(host[1]),
                     reserved_status=self.usb_reserved_status_state(),
                     **dict(zip(("soft_resets", "phy_ready", "soft_connect", "interrupt_mask", "interrupt_source", "interrupts"), fields)),
@@ -460,7 +469,8 @@ class CPU:
                     naks=host[10], stalls=host[11], errors=host[12], toggle_errors=host[13], transfers=host[14],
                     queued=host[15], fifo_overflows=host[16], fifo_underflows=host[17],
                     interrupt_mode="core registers (UINT = 1)" if host[18] & 8 else "wrapper (UINT = 0)",
-                    pull_up=bool(host[19]), endpoints=endpoints)
+                    pull_up=bool(host[19]), iso_errors=host[20], iso_missed=host[21], iso_underruns=host[22],
+                    iso_overruns=host[23], endpoints=endpoints)
 
     def usb_attach(self):
         """Plug the cable into a full-speed host: VBUS now. Once the device's pull-up shows (SOFTCONN, with
@@ -576,11 +586,106 @@ class CPU:
         transfer = self.usb_submit("in", endpoint | 0x80, None, b"", max_length, max_packet, timeout_ms)
         return self.usb_wait(transfer) if wait else transfer
 
+    def usb_set_interface(self, interface, alternate, timeout_ms=1000):
+        """SET_INTERFACE: select an interface's alternate setting, as a host does to start (1) or stop (0)
+        an audio streaming interface. Returns usb_result; the host's data toggles for the interface's bulk
+        and interrupt endpoints restart."""
+        return self.usb_control((0x01, 11, alternate, interface), None, timeout_ms)
+
+    def usb_iso_stream_out(self, endpoint, packets, wait=False):
+        """Queue payloads for an isochronous OUT endpoint, one packet per 1 ms frame (0 to 1023 bytes each;
+        an empty payload is a zero-length packet). They go out after the coming SOFs, behind any still
+        queued; nothing is retried and a frame with nothing queued carries no packet. With wait=True the
+        guest runs until all are sent. Returns usb_iso_state(endpoint)."""
+        self.ensure_open()
+        packets = [bytes(packet) for packet in packets]
+        number = self._usb_iso_number(endpoint, False)
+        if any(len(packet) > 1023 for packet in packets):
+            raise ValueError("a full-speed isochronous packet is at most 1023 bytes")
+        if packets:
+            data = b"".join(packets)
+            self.checked(self.lib.c6_usb_iso_out(self.handle, number, C.create_string_buffer(data, len(data) or 1),
+                                                 (C.c_uint32 * len(packets))(*map(len, packets)), len(packets)))
+        if wait:
+            self._usb_iso_wait(number)
+        return self.usb_iso_state(number)
+
+    def usb_iso_stream_in(self, endpoint, frames, wait=True, max_packet=None, short_below=0):
+        """Ask an isochronous IN endpoint for a packet in each of the next `frames` frames. With wait=True the
+        guest runs until they have passed and the packets are returned as usb_iso_collect does; otherwise
+        collect them later. A packet above `max_packet` (the endpoint's size from usb_enumerate, else 1023)
+        is an error; one with data but fewer than `short_below` bytes counts as short."""
+        self.ensure_open()
+        number = self._usb_iso_number(endpoint, True)
+        if type(frames) is not int or frames < 0:
+            raise ValueError("frames must be a count")
+        if max_packet is None:
+            max_packet = self.usb_iso_packets.get(number | 0x80, 1023)
+        self.checked(self.lib.c6_usb_iso_in(self.handle, number, frames, max_packet, short_below))
+        if wait:
+            self._usb_iso_wait(number | 0x80)
+            return self.usb_iso_collect(number)
+
+    def usb_iso_collect(self, endpoint):
+        """The outcome of each IN token sent since the last call, oldest first: `frame` (the frame number of
+        the SOF before it), `cycles` (when the transaction ended), `data`, and `status`: "data", "empty"
+        (a zero-length packet: the device had nothing loaded) or "error" (no answer, or a packet above
+        max_packet)."""
+        self.ensure_open()
+        number = self._usb_iso_number(endpoint, True)
+        found = []
+        while True:
+            rows, data, fields = (C.c_uint64 * (3 * 1024))(), (C.c_ubyte * (1024 * 1023))(), (C.c_uint64 * 3)()
+            self.checked(self.lib.c6_usb_iso_read(self.handle, number, rows, 1024, data, len(data), fields))
+            at = 0
+            for index in range(fields[0]):
+                size = rows[index * 3 + 2]
+                found.append(dict(frame=rows[index * 3] & 0xffff, status=("data", "empty", "error")[rows[index * 3] >> 16],
+                                  cycles=rows[index * 3 + 1], data=bytes(data[at:at + size])))
+                at += size
+            if not fields[2]:
+                return found
+
+    def usb_iso_stop(self, endpoint):
+        """Drop an isochronous stream's queued OUT packets, or (endpoint address with bit 7) the IN frames
+        still asked for. Packets already collected stay."""
+        self.ensure_open()
+        self.checked(self.lib.c6_usb_iso_stop(self.handle, endpoint))
+
+    def usb_iso_state(self, endpoint):
+        """One isochronous stream's counts since the board was enabled (endpoint address with bit 7 for IN).
+        OUT: `queued` packets waiting, `sent`, `packets` and `bytes` the device stored, `missed` lost
+        because its FIFO was full (OVERRUN), `errors` not taken for another reason (the device not
+        listening, the endpoint not isochronous, or the packet above its size). IN: `queued` frames still
+        to ask in, `sent` tokens, `packets` and `bytes` that came with data, `missed` zero-length answers,
+        `short` packets under short_below, `errors` (no answer, or a packet above max_packet), `waiting`
+        outcomes not collected yet and `dropped` ones lost because more than 65536 waited."""
+        self.ensure_open()
+        if type(endpoint) is not int or not 1 <= endpoint & 0x7f <= 4 or endpoint & ~0x8f:
+            raise ValueError("isochronous streams go to endpoints 1 to 4")
+        fields = (C.c_uint64 * 9)()
+        self.checked(self.lib.c6_usb_iso_stats(self.handle, endpoint, fields))
+        return dict(zip(("queued", "sent", "packets", "bytes", "missed", "short", "errors", "waiting", "dropped"), fields))
+
+    def _usb_iso_number(self, endpoint, into_host):
+        if type(endpoint) is not int or not 1 <= endpoint & 0x7f <= 4 or endpoint & ~0x8f or (endpoint & 0x80 and not into_host):
+            raise ValueError("expected an isochronous endpoint address: 1 to 4, with bit 7 for IN")
+        return endpoint & 15
+
+    def _usb_iso_wait(self, address):
+        # Until the stream has nothing left to send, or the port goes down (which empties it).
+        if not self.usb_state()["sof"]:
+            raise UsbError("isochronous streams need the host's SOF (usb_sof)")
+        while self.usb_iso_state(address)["queued"]:
+            self.run(USB_FRAME_CYCLES)
+        self.run(USB_FRAME_CYCLES)   # the last frame's transaction ends within it
+
     def usb_enumerate(self, address=1, configuration=None, timeout_ms=1000):
         """Enumerate as a host does: wait for the port (attach first), read 8 bytes of the device descriptor,
         SET_ADDRESS, read the device descriptor and the whole configuration descriptor, SET_CONFIGURATION
         (the descriptor's value unless given). Later transfers use the packet sizes found. Raises UsbError
-        if a step does not succeed; `timeout_ms` applies to each step."""
+        if a step does not succeed; `timeout_ms` applies to each step. Each endpoint found is listed with
+        its interface and that interface's alternate setting."""
         self.ensure_open()
         if not self.usb_state()["cable_connected"]:
             raise UsbError("the USB cable is not attached")
@@ -589,7 +694,7 @@ class CPU:
             if self.cycles() >= end:
                 raise UsbError(f'the USB port did not come up within {timeout_ms} ms (port {self.usb_state()["port"]})')
             self.run(min(USB_FRAME_CYCLES, end - self.cycles()))
-        self.usb_ep0_packet, self.usb_packets, self.usb_interfaces = 8, {}, {}
+        self.usb_ep0_packet, self.usb_packets, self.usb_interfaces, self.usb_iso_packets = 8, {}, {}, {}
         steps = []
 
         def control(name, setup, size=None):
@@ -606,18 +711,20 @@ class CPU:
         device = control("device descriptor", (0x80, 6, 0x0100, 0), 18)
         total = struct.unpack_from("<H", control("configuration descriptor, 9 bytes", (0x80, 6, 0x0200, 0), 9), 2)[0]
         descriptor = control("configuration descriptor", (0x80, 6, 0x0200, 0), total)
-        endpoints, interface, at = [], None, 0
+        endpoints, interface, alternate, at = [], None, 0, 0
         while at + 2 <= len(descriptor) and descriptor[at]:
             size, kind = descriptor[at], descriptor[at + 1]
             if kind == 4 and size >= 9:
-                interface = descriptor[at + 2]
+                interface, alternate = descriptor[at + 2], descriptor[at + 3]
             elif kind == 5 and size >= 7:
                 number, attributes, packet = descriptor[at + 2], descriptor[at + 3], struct.unpack_from("<H", descriptor, at + 4)[0]
-                endpoints.append(dict(address=number, interface=interface, max_packet=packet & 0x7ff,
+                endpoints.append(dict(address=number, interface=interface, alternate=alternate, max_packet=packet & 0x7ff,
                                       type=("control", "isochronous", "bulk", "interrupt")[attributes & 3]))
                 if attributes & 3 in (2, 3):
                     self.usb_packets[number] = min(packet & 0x7ff, 64)
                     self.usb_interfaces.setdefault(interface, []).append(number)
+                elif attributes & 3 == 1:
+                    self.usb_iso_packets[number] = max(self.usb_iso_packets.get(number, 0), min(packet & 0x7ff, 1023))
             at += size
         value = descriptor[5] if configuration is None else configuration
         control("set configuration", (0x00, 9, value, 0))

@@ -241,7 +241,7 @@ class Stock:
                                 "codec models the documented AIC3106-compatible control subset; physical part/reset wiring and analog timing unverified",
                                 "McASP supports stock external 48 kHz, two 32-bit slots, AXR13/14; input is supplied at the digital ADC boundary",
                                 "codec 24.576 MHz MCLK is inferred; analog processing and other McASP formats pending",
-                                "USB0 models the wrapper, the MUSB core in peripheral mode (control, bulk and interrupt endpoints, FIFOs) and a scripted full-speed host; isochronous traffic, high speed, host/OTG, queues and DMA transfers are not modelled (DMA set-up registers hold, DMAEN faults)",
+                                "USB0 models the wrapper, the MUSB core in peripheral mode (control, bulk, interrupt and isochronous endpoints, FIFOs) and a scripted full-speed host; high speed, host/OTG, queues and DMA transfers are not modelled (DMA set-up registers hold, DMAEN faults)",
                                 "reserved-low writes require explicit opt-in and guards; silicon bus response remains unverified",
                                 "EDMA FIFO only supports aligned single 32-bit words; QDMA/chaining modes pending",
                                 "OLED models the documented stock command/frame stream; controller identity and further commands unverified",

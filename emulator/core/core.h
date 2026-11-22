@@ -132,14 +132,36 @@ int c6_usb_run(void *machine, uint32_t id, uint64_t budget);
 /* The host forgets an endpoint's data toggle (address with bit 7 for IN), as after SET_INTERFACE. It does
    so itself after SET_CONFIGURATION (all) and CLEAR_FEATURE(ENDPOINT_HALT) (one). */
 int c6_usb_toggle_reset(void *machine, uint32_t endpoint);
-/* fields[20]: port (0 detached, 1 waiting for the pull-up, 2 debounce, 3 reset, 4 enabled), VBUS, the
+/* fields[24]: port (0 detached, 1 waiting for the pull-up, 2 debounce, 3 reset, 4 enabled), VBUS, the
    address the host uses, configuration, the address the device answers to, bus resets, SOF on, SOFs sent,
    frame, suspended, NAKs, STALLs, errors, data-toggle errors, transfers finished, transfers queued, FIFO
-   bytes overflowed, FIFO bytes underflowed, CTRLR, pull-up present. */
+   bytes overflowed, FIFO bytes underflowed, CTRLR, pull-up present, isochronous errors (the streams'
+   `errors` and frames whose streams could not start), isochronous frames missed (the streams' `missed`),
+   times the device set UNDERRUN, times it set OVERRUN. */
 int c6_usb_host_stats(void *machine, uint64_t *fields);
-/* Endpoint 1 to 4. fields[12]: TXMAXP, RXMAXP, TXFIFOSZ, RXFIFOSZ, TXFIFOADDR, RXFIFOADDR, packets waiting
-   to go, packets waiting to be unloaded, IN stalled, OUT stalled, TXCSR high byte, RXCSR high byte. */
+/* Endpoint 1 to 4. fields[14]: TXMAXP, RXMAXP, TXFIFOSZ, RXFIFOSZ, TXFIFOADDR, RXFIFOADDR, packets waiting
+   to go, packets waiting to be unloaded, IN stalled, OUT stalled, TXCSR high byte, RXCSR high byte,
+   UNDERRUN, OVERRUN. */
 int c6_usb_endpoint(void *machine, uint32_t number, uint64_t *fields);
+/* Isochronous streams on endpoints 1 to 4 of an enabled port (usb.h). Each frame, after the SOF, the host
+   sends one queued OUT packet per endpoint and one IN token per endpoint with frames asked for; nothing
+   is retried. c6_usb_iso_out queues `count` packets, `sizes[i]` bytes each (0 to 1023), taken in turn
+   from `data`. c6_usb_iso_in asks for `frames` more IN tokens; a packet above `max_packet` is an error,
+   one with data but under `short_below` counts as short. c6_usb_iso_stop drops what is queued or still
+   asked for (address with bit 7 for IN). A bus reset or unplugging does the same. */
+int c6_usb_iso_out(void *machine, uint32_t endpoint, const uint8_t *data, const uint32_t *sizes, uint32_t count);
+int c6_usb_iso_in(void *machine, uint32_t endpoint, uint32_t frames, uint32_t max_packet, uint32_t short_below);
+int c6_usb_iso_stop(void *machine, uint32_t address);
+/* Takes the IN tokens' outcomes, oldest first, while rows and data fit (the latest 65536 are kept until
+   taken). rows, three per token: status << 16 | frame number (status 0 data, 1 zero-length packet, 2 no
+   answer or a packet above max_packet), the cycle the transaction ended, the data size.
+   fields[3]: rows copied, bytes copied, outcomes still waiting. */
+int c6_usb_iso_read(void *machine, uint32_t endpoint, uint64_t *rows, uint32_t row_capacity, uint8_t *data, uint32_t capacity, uint64_t *fields);
+/* One stream (address with bit 7 for IN). fields[9]: OUT packets queued or IN frames still asked for,
+   packets or tokens sent, packets the device stored (OUT) or that carried data (IN), their bytes, missed
+   (OUT: lost to a full FIFO; IN: zero-length), short (IN), errors (OUT: not taken for another reason;
+   IN: status 2), IN outcomes waiting to be read, IN outcomes dropped unread. */
+int c6_usb_iso_stats(void *machine, uint32_t address, uint64_t *fields);
 /* USB0 reserved offsets 0x80c/0x84c read 0 and CPU word stores of 0 to 0x808/0x848 are ignored, as on
    the unit with no host attached (M1 bench I5, 2026-11-16). Other accesses to them are unsupported.
    fields[2]: accesses counted, trace rows kept (the first 4096). */

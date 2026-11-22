@@ -380,11 +380,21 @@ void Board::schedule_timer(unsigned index, uint64_t cycle) {
     uint32_t mode = registers[base + 0x20] >> 6 & 3;
     uint32_t global = registers[base + 0x24];
     uint32_t period = registers[base + 0x18];
+    uint64_t numerator = index < 2 ? 2 : 1, denominator = index < 2 ? 31 : 2;
+    if (!(global >> 2 & 3)) { // 64-bit general-purpose timer: TIM34:TIM12 counts to PRD34:PRD12.
+        uint64_t period64 = uint64_t(registers[base + 0x1c]) << 32 | period;
+        uint64_t counter = uint64_t(registers[base + 0x14]) << 32 | registers[base + 0x10];
+        uint64_t needed = counter < period64 ? period64 - counter : period64 == UINT64_MAX ? UINT64_MAX : period64 + 1;
+        if (!mode || (global & 3) != 3 || !period64 || needed > (uint64_t(1) << 56)) {
+            timer.deadline = UINT64_MAX; return; // a match further off than any run (2^56 ticks) is not scheduled
+        }
+        timer.deadline = cycle + (needed * denominator - timer.fraction + numerator - 1) / numerator;
+        return;
+    }
     if (!mode || !(global & 1) || !period) { timer.deadline = UINT64_MAX; return; }
-    if ((global >> 2 & 3) != 1) throw std::runtime_error("timer mode other than dual 32-bit unchained is not implemented");
+    if ((global >> 2 & 3) != 1) throw std::runtime_error("timer modes other than 64-bit general-purpose and dual 32-bit unchained are not implemented");
     uint64_t counter = registers[base + 0x10];
     uint64_t needed = counter < period ? period - counter : uint64_t(period) + 1;
-    uint64_t numerator = index < 2 ? 2 : 1, denominator = index < 2 ? 31 : 2;
     timer.deadline = cycle + (needed * denominator - timer.fraction + numerator - 1) / numerator;
 }
 void Board::update_timer(unsigned index, uint64_t cycle) {
@@ -392,8 +402,27 @@ void Board::update_timer(unsigned index, uint64_t cycle) {
     if (cycle < timer.last) { timer.last = cycle; timer.fraction = 0; }
     uint32_t mode = registers[base + 0x20] >> 6 & 3;
     uint32_t period = registers[base + 0x18];
-    if (!mode || !(registers[base + 0x24] & 1) || !period) { timer.last = cycle; return; }
     uint64_t numerator = index < 2 ? 2 : 1, denominator = index < 2 ? 31 : 2;
+    if (!(registers[base + 0x24] >> 2 & 3)) { // 64-bit general-purpose timer
+        uint64_t period64 = uint64_t(registers[base + 0x1c]) << 32 | period;
+        if (!mode || (registers[base + 0x24] & 3) != 3 || !period64) { timer.last = cycle; return; }
+        if (mode == 3) throw std::runtime_error("timer continuous reload is not implemented");
+        uint64_t elapsed = (cycle - timer.last) * numerator + timer.fraction;
+        uint64_t ticks = elapsed / denominator; timer.fraction = elapsed % denominator; timer.last = cycle;
+        uint64_t old = uint64_t(registers[base + 0x14]) << 32 | registers[base + 0x10];
+        uint64_t total = old + ticks; // no wrap: a run is far shorter than 2^64 ticks, and a counter at its period restarts
+        bool one_shot = false;
+        if (ticks && (old < period64 ? total >= period64 : total - period64 > period64)) {
+            registers[base + 0x44] |= 2;
+            if (!(registers[base + 0x24] & 0x10) || (registers[base + 0x44] & 1)) event(TIMER_EVENT[index]);
+            if (mode == 1) { registers[base + 0x20] &= ~0xc0u; total = period64; one_shot = true; }
+        }
+        if (!one_shot && period64 != UINT64_MAX) total %= period64 + 1;
+        registers[base + 0x10] = uint32_t(total); registers[base + 0x14] = uint32_t(total >> 32);
+        schedule_timer(index, cycle);
+        return;
+    }
+    if (!mode || !(registers[base + 0x24] & 1) || !period) { timer.last = cycle; return; }
     uint64_t elapsed = (cycle - timer.last) * numerator + timer.fraction;
     uint64_t ticks = elapsed / denominator; timer.fraction = elapsed % denominator; timer.last = cycle;
     uint64_t old = registers[base + 0x10], total = old + ticks;
@@ -587,6 +616,7 @@ void Board::write_word(uint32_t address, uint32_t value, uint64_t cycle) {
         if (off == 0x44) registers[address] = (value & 0x50005u) | (registers[address] & ~(value & 0xa000au) & 0xa000au);
         else registers[address] = value;
         if (off == 0x24 && !(value & 1)) { registers[TIMER[i] + 0x10] = 0; timers[i].fraction = 0; }
+        if (off == 0x24 && !(value & 2)) registers[TIMER[i] + 0x14] = 0; // TIM34 held in reset
         schedule_timer(i, cycle); return;
     }
     uint32_t off = address - INTC;

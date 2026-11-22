@@ -232,7 +232,7 @@ fault. Missing instructions and unmapped MMIO stop with the PC, instruction and 
   the existing state/IR layouts unchanged. See [the measurements](../performance-investigation.md).
 
 The optional board model supplies interrupt event latches/muxes, coherent cache maintenance, protected
-SYSCFG writes, pull configuration, dual-32-bit timer counting/period events and PSC module transitions.
+SYSCFG writes, pull configuration, timer counting/period events (dual 32-bit unchained, and the 64-bit general-purpose mode) and PSC module transitions.
 PSC completion takes a deterministic functional 16 cycles. Each timer's 1:2 half raises its own DSP event (4, 40, 25, 86 for timers 0-3). Timer rates assume a 372 MHz DSP, 24 MHz timer0/1 and
 186 MHz timer2/3 input. Maskable interrupts select the lowest enabled pending CPU interrupt, honor
 GIE/NMIE and branch delay slots, save IRP/ITSR, and enter the ISTP vector with nine cycles of overhead.
@@ -315,8 +315,8 @@ reset (16 functional DSP cycles), source/mask/set/clear/EOI interrupts in both C
 MUSB core in peripheral mode (endpoint 0 and endpoints 1 to 4, indexed and direct registers, the
 4 KiB dynamic FIFO RAM) and CFGCHIP2 PHY clock-good (64 functional cycles, internal 24 MHz
 reference). With no cable, SOFTCONN produces no traffic; `c6_usb_attach` plugs in a scripted
-full-speed host (`usb.h`, and "USB device and scripted host" in the emulator README). Isochronous
-traffic, host/OTG, CPPI DMA traffic and unknown MMIO remain strict faults. `tests/stock_smoke.py --usb-reset` verifies original reset/PHY polling.
+full-speed host (`usb.h`, and "USB device and scripted host" in the emulator README). Isochronous endpoints are served by
+the host's streams (`c6_usb_iso_out`, `c6_usb_iso_in`). Host/OTG, CPPI DMA traffic and unknown MMIO remain strict faults. `tests/stock_smoke.py --usb-reset` verifies original reset/PHY polling.
 The next accesses are the shared StarterWare `USBIntStatusControl` reads at `0x01e0080c` (PC
 `0xc15e2034`) and `0x01e0084c`, a Stellaris external-power and ID status pair that the C6748
 register table does not define. The M1 bench session (2026-11-16, row I5) measured both words as 0

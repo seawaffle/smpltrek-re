@@ -42,10 +42,10 @@ TEMPO, SETTINGS = 0xc1500cf4, 0xc14fac58
 TRACK_CHANNELS, MIDI_SETTINGS = SETTINGS + 0x8c, SETTINGS + 0xd8
 BLOCK = 128 * CYCLES_PER_SECOND // 48000   # one audio block: 2.67 ms
 CONFIGURATION_SHA256 = "fa71cef9d8f089a6b9613d590805fb966d76ea383d694afcc7c0c3372dc3b1e2"   # analysis/usb_desc_map.py build()
-ENDPOINTS = [dict(address=0x01, interface=1, max_packet=196, type="isochronous"),
-             dict(address=0x82, interface=2, max_packet=196, type="isochronous"),
-             dict(address=0x03, interface=3, max_packet=64, type="bulk"),
-             dict(address=0x83, interface=3, max_packet=64, type="bulk")]
+ENDPOINTS = [dict(address=0x01, interface=1, alternate=1, max_packet=196, type="isochronous"),
+             dict(address=0x82, interface=2, alternate=1, max_packet=196, type="isochronous"),
+             dict(address=0x03, interface=3, alternate=0, max_packet=64, type="bulk"),
+             dict(address=0x83, interface=3, alternate=0, max_packet=64, type="bulk")]
 
 
 def measure(output, genre, seed):
