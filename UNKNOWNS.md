@@ -41,7 +41,7 @@ Products: S = SmplTrek, L = Lofi-12 XT, C = CyDrums, all = all three.
 | RTOS and memory | Tasks, Hwi/Swi, SYS/BIOS 6.76.03.01, heap, copy table (XF-7, LIB-3, MEM-1) | run-time use of the DDR gap, heap headroom (S, D) |
 | Factory test mode | Entry and every page's controls in the emulator (HW-50) | seen on the unit, a few page details (D, Sim) |
 | Cross-product | Same board and platform layer; button maps; cross-flash proven; hardware layer identical in all 13 releases, per-product hardware use mapped (XF-1..XF-25) | 33 differing app blocks, foreign-app behaviour (S, D) |
-| Other Sonicware products | Containers and seeds for the Liven range, ELZ_1, ELZ_1 play; which C674x part each could be (INT-16, INT-17) | content formats, Liven bootloader, product numbers, the Liven part (F) |
+| Other Sonicware products | Containers and seeds; which C674x part each could be (INT-16, INT-17); static profiles of all 24 images: hardware use, tasks, audio, display, storage, USB/MIDI, formats, Liven SysEx backup protocol, release history (`docs/14-other-products.md`, LIV/ELP/MIN/ELZ claims, 2026-11-23) | content formats, Liven bootloader, product numbers, the Liven part, Liven pot ADC path (F) |
 
 ## Open questions by subsystem
 
@@ -255,9 +255,14 @@ Mapped in `docs/06-audio-engine.md`, claims AUD-1..AUD-12 (2026-11-17).
 ### Other Sonicware products (F)
 - Seeds that rest on one release: MINIMAL, Bass&Beats, Mega Synthesis, Ambient Ø. INT-4.
 - Product numbers for the unnumbered products; why CyDrums and ELZ_1 play share family 8.
-- What the Liven bootloader checks beyond the container (no bootloader in any file); the Liven backup SysEx protocol.
-- ELZ_1 v7.0 rev-1 header variant. `hw_inventory.py` reads the legacy images' sections (2026-11-18); the
-  integrity parser still rejects the layout.
+- What the Liven bootloader checks beyond the container (no bootloader in any file). The Liven backup SysEx protocol
+  was read 2026-11-23 (LIV-6); the per-kind CRC seed constants and the payload layouts are not decoded.
+- Still open after the 2026-11-23 profiles (`docs/14-other-products.md`, each profile's open list): how the Liven
+  pots and battery are read (LIV-11); the Liven peripheral clock; ELZ_1 play and MINIMAL audio block size, VID/PID and
+  what the Timer2 + EDMA CC1 GPIO DMA drives (ELP-7); how MINIMAL's RAM disk is saved; the original ELZ_1's
+  toolchain version (ELZ-12), codec part and flash map.
+- ELZ_1 v7.0 rev-1 header variant. Since 2026-11-23 `mmtd2elf.mmtd_sections` reads the legacy images'
+  sections, so every analysis tool can read them; the integrity parser still rejects the layout.
 - Which DSP part (2026-11-18, INT-16, INT-17): every image was built for the C6742/C6746/C6748 class. ELZ_1 and ELZ_1
   play drive the LCD controller, so need a C6748. SmplTrek, Lofi-12 XT, CyDrums and MINIMAL need at least a C6746. The
   Liven code fits all three, the C6742 included, and the firmware cannot narrow it further; only a board photo can.

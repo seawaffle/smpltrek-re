@@ -42,6 +42,8 @@ which installs an update from the card even when the installed system does not s
 | [11-abi](11-abi.md) | The C6000 calling convention as the stock code uses it, for callbacks into the firmware |
 | [12-update-container](12-update-container.md) | The update file format and its seeded CRC-32 integrity fields |
 | [13-palette-swap-howto](13-palette-swap-howto.md) | Step by step for newcomers: putting another product's firmware on a device with `tools/palette_swap.py`, and getting back |
+| [14-other-products](14-other-products.md) | The other Sonicware products side by side (Liven line, original ELZ_1, ELZ_1 play, MINIMAL), static only |
+| [15-liven](15-liven.md), [16-elz1-play-minimal](16-elz1-play-minimal.md), [17-elz1](17-elz1.md) | Per-product static profiles: image, tasks, hardware use, formats and protocols (the Liven SysEx backup), release history |
 
 Evidence levels used throughout:
 - **device**: seen on the unit (recorded in [experiments/](../experiments/README.md));

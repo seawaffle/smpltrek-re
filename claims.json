@@ -1,6 +1,6 @@
 {
   "format": "smpltrek-claims/1",
-  "updated": "2026-11-20",
+  "updated": "2026-11-23",
   "scope": "All device-level claims come from ONE unit, bootloader v1.0.17, unless noted. Seeds, checks and bootloader behaviour may differ on other units or bootloader versions.",
   "statuses": {
     "observed-device": "Seen on hardware; evidence pinned (photo, transcript, or recorded artifact hash plus the operator's observation).",
@@ -775,7 +775,7 @@
       "status": "observed-file",
       "confidence": "high",
       "evidence": ["hw_inventory.py data-word scan: two words per timer in each of the 15 images (2026-11-18)", "bios_6_76_03_01 packages/ti/sysbios/timers/timer64/Timer.xs device tables: TMS320C6742/C6746/C6748 and OMAPL138 map to TMS320DA850, C6747/C6745/C6743 and OMAPL137 to TMS320DA830"],
-      "notes": "2026-11-18. This is the build's device setting, not a use of the timers, so it does not separate C6742, C6746 and C6748 (INT-16 does what it can). The legacy ELZ_1 images are not read through their copy table, so they are not covered."
+      "notes": "2026-11-18. This is the build's device setting, not a use of the timers, so it does not separate C6742, C6746 and C6748 (INT-16 does what it can). The legacy ELZ_1 images are not read through their copy table, so they are not covered. 2026-11-23: the seven legacy ELZ_1 releases list the same Timer0-3 table (ELZ-2)."
     },
     {
       "id": "XF-18",
@@ -954,6 +954,598 @@
         "docs/01-platform-map.md \"Hardware use per product\""
       ],
       "notes": "2026-11-19. Whether BATTERY TYPE 2 (LITHIUM) is reachable in the Lofi and CyDrums menus is open."
+    },
+    {
+      "id": "LIV-1",
+      "area": "other-products",
+      "claim": "All ten Liven releases run one board design: the pin multiplexing (McASP0 ACLKX0/AFSX0/AHCLKX0/AMUTE0/AXR0_0/AXR0_1, UART0, I2C0, SPI1 with only SCS0, GPIO banks 0-6 and 8) and the Hwi map (INTSEL 4 I2C0, 5 EDMA3 CC0, 6 McASP0, 7 GPIO bank 8, 8 UART0, 14 Timer64P0; IER 0x41F3) are identical in every image.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/other_products/liven/pinmux.py + pmdecode.py (SYSCFG helpers run in c6sim, fields named from StarterWare hw_syscfg0_C6748.h): identical decode in all ten",
+        "analysis/other_products/liven/hwisim.py (SYS/BIOS INTMUX writer run in c6sim, e.g. 8bit 3.0.76 0xC0562778) and hwiobj.py (dispatch table at module state +44)",
+        "docs/15-liven.md"
+      ],
+      "notes": "Pinmux helpers were run in isolation with zero arguments; a write behind an argument-dependent branch can be missed. A second INTMUX writer inside the test-mode code (8bit 0xC053C0AC) was not simulated."
+    },
+    {
+      "id": "LIV-2",
+      "area": "other-products",
+      "claim": "The Liven codec start-up writes the same 42 AIC310x registers at I2C 0x18 in all ten releases except register 2 (0x22, fs(ref)/2, in 8bit warps, XFM, Lofi-12, Mega; 0x44, fs(ref)/3, in Bass&Beats and Ambient), never writes register 8 or the PLL registers, so the codec is an I2S clock slave without its PLL.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "analysis/other_products/liven/codec_sim.py: codec start-up (caller of codec_reset, e.g. 8bit 3.0.76 0xC052C06C) run in c6sim with codec_write (0xC0549FC8) hooked, decoded with analysis/codec_map.decode",
+        "8bit 3.0.76 0xC052C3B8-0xC052C3C4: 0xC054A174(0x01C22000, 24) before the codec start-up",
+        "docs/15-liven.md"
+      ],
+      "notes": "Codec family by register map and address, as for SmplTrek (not confirmed by part number)."
+    },
+    {
+      "id": "LIV-3",
+      "area": "other-products",
+      "claim": "In the Liven products the DSP is the I2S master: McASP0 transmit clock and frame sync are internal (McASPTxClkCfg 0x8020, CLKXDIV 0) with HCLKXDIV 7 (divide by 8) in 8bit warps, XFM, Lofi-12 and Mega and 11 (divide by 12) in Bass&Beats and Ambient; serialiser 0 transmits, 1 receives, two 32-bit I2S slots.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "packets.py --calls on McASPTxClkCfg, McASPSerializerTxSet/RxSet, McASPPinDirOutputSet (0x14000001) / InputSet (0xA0000002), Tx/RxFrameSyncCfg in all ten (StarterWare McASP driver hash-matched from SmplTrek)",
+        "8bit 3.0.76 mcasp set-up 0xC052C0D8-0xC052C238",
+        "docs/15-liven.md"
+      ],
+      "notes": "SmplTrek family: codec is master, AXR13 out / AXR14 in."
+    },
+    {
+      "id": "LIV-4",
+      "area": "other-products",
+      "claim": "8bit warps, XFM, Lofi-12 and Mega process audio at 48 kHz and Bass&Beats and Ambient at 32 kHz, if the McASP AUXCLK and the codec master clock are 24.576 MHz.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "LIV-2 (codec fs(ref)/2 against /3) and LIV-3 (McASP divide by 8 against 12): both give a 3:2 rate ratio",
+        "code-built float constants (analysis/other_products/liven/consts.py): 48000.0f dominant in the first group (8bit 3.0.76 41 sites, Lofi-12 2.1.65 80), 32000.0f and 1/32000 in Bass&Beats (25, 9) and Ambient (29, 5)",
+        "docs/15-liven.md"
+      ],
+      "notes": "The ratio and the group split are firm; the absolute rate rests on the 24.576 MHz assumption (no code names the clock)."
+    },
+    {
+      "id": "LIV-5",
+      "area": "other-products",
+      "claim": "Liven audio blocks are 64 stereo frames in 8bit warps (all three releases) and 128 frames in XFM, Lofi-12, Mega, Bass&Beats and Ambient, moved by EDMA between the McASP0 DMA port and L1D buffers from 0x11F00000.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "EDMA PaRAM templates (BCNT of 4-byte words: 128 or 256) read with analysis/init_data.py, e.g. 8bit 3.0.76 0xC0576924-0xC057698C, Lofi-12 2.1.65 0xC1F9FD14-0xC1F9FDC0",
+        "docs/15-liven.md"
+      ],
+      "notes": "2026-11-23, static."
+    },
+    {
+      "id": "LIV-6",
+      "area": "other-products",
+      "claim": "The Liven apps exchange backups over DIN SysEx as F0 00 48 04 00 00 <product number> 60 <cmd> <7-bit packed payload> F7: cmd 1 begin carries u32 kind and u32 length, cmd 2 carries up to 210 data bytes, cmd 3 carries a zlib CRC-32 seeded with the CRC of a per-kind 32-bit constant.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "8bit 3.0.76 read: receive feed 0xC05507E8 (header template 0xC0578518), unpack 0xC0550720, BackupHandler callback 0xC052A080, send 0xC054EAF4 with begin 0xC054ED10, chunk 0xC054EB88 via DataExport 0xC054EB98, end 0xC054EB70, crc32 0xC0565DE0, per-kind constant 0xC0544A6C",
+        "func_match from 8bit 3.0.76 with these names: all transport functions hash-matched in the other nine (scratch l8-*.fm.json); header device byte read in each image (2, 3, 4, 7, 11, 13)",
+        "docs/15-liven.md"
+      ],
+      "notes": "Accepted backup kind: 8bit 4, XFM 3, Lofi-12 1, Mega 3, Bass&Beats 6, Ambient 1/3/6 by a BackupHandler field (0xC167BA00); WaveTableTransfer (Bass&Beats, Ambient) uses kind 7. Contents of each kind not examined."
+    },
+    {
+      "id": "LIV-7",
+      "area": "other-products",
+      "claim": "Liven 8bit warps 3.0.76 does not act on the firmware update messages (SysEx category 0x7F): the only two consumers of its SysEx receiver (BackupHandler and the app delegate) return unless the category is 0x60, so updates are taken by the bootloader alone; in the other nine images the BackupHandler and WaveTableTransfer callbacks gate on 0x60 the same way.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "8bit 3.0.76: code references to the receiver object 0xC04E4568 at 0xC0502A40 (app delegate, callback 0xC0544BEC), 0xC052A38C (BackupHandler), 0xC0544A54 (reset); both callbacks compare category with 96 first",
+        "analysis/other_products/liven/sysexlam.py: every receiveSystemExclusiveMessage lambda target in all ten starts with the 0x60 compare",
+        "docs/15-liven.md"
+      ],
+      "notes": "The app-delegate SysEx callback was read in 8bit 3.0.76 only (hash-matched in 8bit 1.1.62 and 2.0.67; not located in Lofi-12, Mega, Ambient). Not checked: whether some other path (e.g. a key held at power-on) hands control to the bootloader; no Liven bootloader is available (INT-14)."
+    },
+    {
+      "id": "LIV-8",
+      "area": "other-products",
+      "claim": "The Liven RTS is the pre-8.3.11 TI CGT form (8.3.2, 8.3.9 and 8.3.10 match identically and best; powf, tanf and __TI_readmsg match only the older libraries), unlike SmplTrek's 8.3.11-8.3.13, and the SYS/BIOS kernel matches 6.76.03.01 rebuilt with CGT 8.3.10.",
+      "status": "observed-file",
+      "confidence": "medium",
+      "evidence": [
+        "analysis/lib_match.py with rts6740_elf.lib of CGT 8.3.2/8.3.9/8.3.10/8.3.13/8.5.0 on all ten (analysis/other_products/liven/rtsver.py)",
+        "sysbios_match.cfg built with 8.3.10 (scratch bios/): 66 unique matches in 8bit, XFM, Lofi-12, Mega; 77 in Bass&Beats and Ambient; SmplTrek 3.2.174 62",
+        "docs/15-liven.md"
+      ],
+      "notes": "CGT 8.3.3-8.3.8 and other SYS/BIOS releases not installed or not tried."
+    },
+    {
+      "id": "LIV-9",
+      "area": "other-products",
+      "claim": "Liven static tasks: FlashMemoryDriver 14, MIDIStreamUART 13, IOObserver 13, AsyncTaskHandler 7, ResourceLoader 1 (Bass&Beats, Lofi-12, Mega; Ambient passes a variable), one static task at 1 bound by application_run, Idle 0; all 2 KiB stacks; a 1 ms clock (timer object period 1000 us on interrupt 14) and two Swi_post sites (clock, audio block ISR) in every image.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "analysis/init_data.py --tasks --b14 on all ten; task_handler_set call sites via packets.py --calls (8bit 3.0.76 0xC0525E18, 0xC0537BD4, 0xC055D498, 0xC05687AC)",
+        "clock timer objects e.g. 8bit 3.0.76 0xC057B530; Swi_post sites e.g. 0xC056C650, 0xC052B960",
+        "docs/15-liven.md"
+      ],
+      "notes": "2026-11-23, static."
+    },
+    {
+      "id": "LIV-10",
+      "area": "other-products",
+      "claim": "The Liven products have no USB, SD card, panel MCU or display controller in firmware: no image addresses USB0, MMC/SD or a second UART, none has a USB, FatFs, OLED/LCD/Graphics or ADController class, and MIDI is DIN only on UART0 at 31250 baud.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "analysis/hw_inventory.py on all ten (INT-16)",
+        "RTTI class lists (scratch other/*.rtti.json)",
+        "mvk 31250 in the MIDI stream set-up, one site per image (8bit 3.0.76 0xC0537C0C)",
+        "docs/15-liven.md"
+      ],
+      "notes": "The UI vocabulary (four-character strings with dots) points to a segment LED display driven by GPIO scanning; its driver was not located."
+    },
+    {
+      "id": "LIV-11",
+      "area": "other-products",
+      "claim": "No analogue-to-digital path for the Liven pots and battery was found by static search: the C674x has no ADC, SPI1 has one chip select whose only delegate is the flash driver, and no other converter peripheral is addressed, although VRReaderDelegate, VRMedianFilter, HAL::ADHandlerComponent and PowerLevelChecker exist.",
+      "status": "open",
+      "confidence": "medium",
+      "evidence": [
+        "LIV-1 pinmux (SPI1 SCS0 only)",
+        "RTTI bases: HAL::FlashMemoryDriver is the only HAL::SPIDriverDelegate in every image",
+        "docs/15-liven.md"
+      ],
+      "notes": "2026-11-23, static."
+    },
+    {
+      "id": "LIV-12",
+      "area": "other-products",
+      "claim": "Liven 8bit warps 3.0.76 added six effects (AutoWah, OverDrive, Phaser, ReverseDelay, RingModulator, Tremolo) and is the first 8bit update to ship a PRESET pmtd image (PMEM, PPTN); Lofi-12 2.1.65 added SoundEffect::HiGain; XFM 3.0.46 kept the 2.0.43 class set; the latest 8bit, XFM and Lofi-12 releases all add the strings CN.LP, LOOP and SCHM.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "RTTI class diffs and string_refs diffs (scratch *.classes.txt, *.strings.json)",
+        "container parse (analysis/other_products/liven/container.py)",
+        "func_match release pairs: 8bit 1.1.62->2.0.67 94%, 2.0.67->3.0.76 88%, XFM 96%, Lofi-12 90%",
+        "docs/15-liven.md"
+      ],
+      "notes": "2026-11-23, static."
+    },
+    {
+      "id": "ELP-1",
+      "area": "other-products",
+      "claim": "ELZ_1 play 3.1.149 is a cmtd container (product word 8) holding a pmtd v3.1.26 preset image with eight (tag, flash address, size) partitions PPM1, PPM2, PWD8, PWDG, PWDD, PPTN, PDPT, PKIT from flash 0x8C3000, and an mmtd v3.1.149 system image with entry 0xC28B0500, B14 0xC29C5678, code 0xC25C9800-0xC28CD300 and the family's seven-section layout; 1.1.62 has seven partitions (no PWDD) and 2.0.109 eight.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "descriptor dump of firmware/other/ELZ_1_play_*.zip (cmtd +0x14 count, 24-byte descriptors, pmtd entries at +32 + 12k)",
+        "analysis/mmtd2elf.py section list",
+        "MVKL/MVKH to B14 in _c_int00",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Content of the partitions not examined."
+    },
+    {
+      "id": "ELP-2",
+      "area": "other-products",
+      "claim": "ELZ_1 play and MINIMAL link the same CGT runtime band as SmplTrek: rts6740_elf.lib matches best with CGT 8.3.11-8.3.13 (ELZ_1 play 3.1.149 120/120/119 unique functions, MINIMAL 132/132/133, against 111-112 / 123-124 for 8.3.2-8.3.10 and 92 / 95 for 8.5.0), and the bios_6_76_03_01 xdc.runtime/boot libraries match 44 functions in each, as in SmplTrek.",
+      "status": "observed-file",
+      "confidence": "medium",
+      "evidence": [
+        "analysis/lib_match.py per CGT version (scratch outputs lib-*.json)",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Same method and caveats as LIB-2/LIB-3; the SYS/BIOS kernel match was not rerun."
+    },
+    {
+      "id": "ELP-3",
+      "area": "other-products",
+      "claim": "ELZ_1 play (1.1.62, 2.0.109, 3.1.149) drives its display through the C6748 LCD controller in LIDD mode, not raster: LIDDClkConfig(15 MHz from a 228 MHz module clock, CLKDIV 15), LIDD mode 3 (asynchronous 8080 MPU), CS0 timing 0x00220045, then MIPI DCS commands 0x11, 0x36 = 0x40, 0x3A = 0x55 (16 bit/pixel), 0x29 through LIDD_CS0_ADDR/DATA, and frames as command 0x2C plus one LIDD DMA of 0x25800 bytes; GP8[14] is driven low then high around the init.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "ELZ_1 play 3.1.149 Graphics::LCDDriver slot 0 0xC27C3B00 (calls 0xC2892240, 0xC2892114, 0xC2892258, 0xC2892220, 0xC2892204 matched to StarterWare lidd.c/raster.c by register offsets in hw_lcdc.h)",
+        "slot 2 0xC27C3D2C / 0xC27C3C70 (cmd 0x2C, RasterDMAFBConfig base..base+0x257FE)",
+        "same constants in 1.1.62 (0xC12BD598, 0xC12BD5CC, 0xC12BD7AC) and 2.0.109 (0xC23C69E0, 0xC23C6A10, 0xC23C6BF0)",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Controller part not named in the image; the opcode set fits ST7789/ILI9341-class controllers (inference). GP8[14] as reset is inference."
+    },
+    {
+      "id": "ELP-4",
+      "area": "other-products",
+      "claim": "ELZ_1 play's frame buffer is 153,600 bytes, RGB565, 320 x 240; the drawing code bounds x < 320, y < 240 and offsets by x * 240, so the UI is 320 wide by 240 high stored column-major (inference: a 240 x 320 portrait-native panel driven in landscape).",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "Cache write-back length 0x25800 at 0xC27C3D44 and DMA ceiling +0x257FE at 0xC27C3D6C",
+        "0xC25F6238-0xC25F6294 (cmpltu against 320, (x<<8)-(x<<4), halfword stores)",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "No column/page address commands (0x2A/0x2B) are sent, so the window is the controller default."
+    },
+    {
+      "id": "ELP-5",
+      "area": "other-products",
+      "claim": "ELZ_1 play (all three releases) and MINIMAL 1.0.58 use 228,000,000 Hz as the peripheral module clock (LCD, SD, SPI, PWM), where SmplTrek 3.2.174 uses 186,000,000 and has no 228 MHz constant; on the C6748 that means the apps assume a 456 MHz CPU rather than SmplTrek's 372 MHz.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "MVK/MVKH constant scan: 0x0D970100 at 6 sites in each ELZ_1 play release (3.1.149: 0xC27C3B68, 0xC2829E10, 0xC2829FA4, 0xC2869E30, 0xC28922A8, 0xC2897A8C) and 2 in MINIMAL (0xC0A08570, 0xC0A15728); SmplTrek 3.2.174 0x0B162280 at 4 sites",
+        "SYSCLK2 = SYSCLK1/2 on the C6748 (04-hardware-access.md clock section)",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "The constant is what the app assumes; the actual PLL setting is in the product's bootloader, which is not in any file."
+    },
+    {
+      "id": "ELP-6",
+      "area": "other-products",
+      "claim": "ELZ_1 play 3.1.149 has no panel MCU over UART: no ADControllerUART class, and its static Hwis are I2C0 (int 4), EDMA3 CC0 (5), McASP0 (6), GPIO bank 8 (8), UART0 (9), MMCSD0 (11), USB0 (12) and Timer64P0 (14), with no UART1 interrupt.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "RTTI class list (rtti_recover.py)",
+        "Hwi module state 0xC29C60E0 (loaded by Hwi_Module_startup 0xC289E060; event bytes +0, dispatch table +44) read through init_data.InitData",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Inference from this: keys, keyboard and LEDs are scanned DSP-side, as in the Liven line (INT-14)."
+    },
+    {
+      "id": "ELP-7",
+      "area": "other-products",
+      "claim": "ELZ_1 play from 2.0.109 and MINIMAL 1.0.58 program TIMER64P2 and EDMA3 CC1 (channel 24) and build PaRAM chains whose destination is the GPIO block, a timer-paced DMA scan of GPIO outputs; ELZ_1 play 1.1.62 addresses neither peripheral and instead has classes DynamicLightingScan and MusicalKeyboard, and no SmplTrek release addresses either peripheral.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "hw_inventory.py census of all four images and SmplTrek 3.2.174",
+        "ELZ_1 play 3.1.149 0xC28419CC-0xC2841A74 (Timer2 0x01F0C000, EDMA3 calls with 0x01E30000 and channel 24), 0xC2841614/0xC2841718 (EDMA3SetPaRAM, destination 0x01E26000 + offset)",
+        "rtti class diff 1.1.62 -> 2.0.109",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "What is scanned (LED rows, key rows) and the exact registers were not decoded."
+    },
+    {
+      "id": "ELP-8",
+      "area": "other-products",
+      "claim": "ELZ_1 play 3.1.149 configures as outputs GP5[0..14], GP4[8..13], GP0[0..6], GP1[0], GP1[1], GP1[7], GP1[10], GP8[12], GP8[14], GP8[15], and as inputs GP4[0], GP4[1], through its GPIO direction wrapper (37 calls); SD card detect is GP8[13] as a bank-8 GPIO interrupt plus GP4[0] read as card-present. SmplTrek's key-matrix pins (GP2[0..5], GP3 columns) are not among them.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "call sites of 0xC2899E30 (GPIODirModeSet wrapper), 0xC2899EB4 / 0xC2899EE4 (GPIOPinWrite wrappers), 0xC2899F34 (GPIOPinRead wrapper) with constant arguments",
+        "0xC28774C8-0xC287760C (GPIOIntTypeSet on pin 142, bank-8 interrupt enable, GP4[0] read)",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Direct GPIO register access (the DMA scan, 0xC283CFF0) is not in this census."
+    },
+    {
+      "id": "ELP-9",
+      "area": "other-products",
+      "claim": "ELZ_1 play 3.1.149 and MINIMAL 1.0.58 contain SmplTrek's mcasp_configure unchanged (106 vs 106 instructions, only moved data addresses and one in-packet reorder) and the same codec PLL/sample-rate writes; their codec output set-ups differ from SmplTrek's: ELZ_1 play powers HPLOUT, HPROUT, HPLCOM, HPRCOM and both line drivers from DAC_L1/R1, MINIMAL powers HPLCOM, HPRCOM (single-ended) and the line drivers with register 41 = 0x02.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "region_diff.py (PRODUCTS swapped) 0xC1621364-0xC16214CC --at 0xC27D1878 0xC09E0C24",
+        "codec_write call arguments: ELZ_1 play 0xC27EEDD4-0xC27EEE70, MINIMAL 0xC09E4E54-0xC09E4EF0",
+        "codec_map.py --decode",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "ELZ_1 play output values were already in 04-hardware-access.md near line 620. MINIMAL's 0xC09E4F08 toggles 86/93 off and register 108 = 0x33 (not decoded here)."
+    },
+    {
+      "id": "ELP-10",
+      "area": "other-products",
+      "claim": "ELZ_1 play 3.1.149 keeps SmplTrek's USB descriptor shape (Audio Control with terminals 3 USB streaming and 5 microphone, two Audio Streaming interfaces, MIDI Streaming IF3, plus a one-interface mass-storage configuration); VID and PID are not in the static data.",
+      "status": "observed-file",
+      "confidence": "medium",
+      "evidence": [
+        "descriptor scan of initialised data (ELZ_1 play 0xC29DC02C-0xC29DC192, MSC 0xC29DB77D); same structure in 1.1.62, 2.0.109, MINIMAL and SmplTrek 3.2.174",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Not assembled by simulation as usb_desc_map.py does for SmplTrek; class-specific sections not compared byte for byte."
+    },
+    {
+      "id": "ELP-11",
+      "area": "other-products",
+      "claim": "ELZ_1 play 3.1.149 locates content and files on the SD card in /Memory, /WaveData, /WaveTableData, /Noise, /Pattern, /Looper, /Kit and /Backup, filters *.e1m (memory), *.e1p (pattern), *.wav and *.stk files, reads a WTLS-tagged /PresetWaveTable.bin or Contents.bin, and parses a custom LoFM chunk in WAV files.",
+      "status": "observed-file",
+      "confidence": "medium",
+      "evidence": [
+        "string_refs.py: folder strings referenced from 0xC286148C-0xC286152C, filter table 0xC29DC7F8, WTLS 0xC27CD998/0xC27CDE60, LoFM 0xC286DB88",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "2.0.109's separate 48 MiB Contents.bin starts WTLS/WTDT/WTNM, the tag set CyDrums' code names; ELZ_1 play's code references only WTLS."
+    },
+    {
+      "id": "ELP-12",
+      "area": "other-products",
+      "claim": "The ELZ_1 play code gives no reason for sharing product number 8 with CyDrums: the family word is never compared, and what the two share beyond the rest of the family is the WTLS/WTDT/WTNM content-bank format and eight class names (LaunchAnimation, NoteHoldDelegate, ResourceLoader, Sequencer::ArpeggiatorPlayer, SoundEffect::FxFilter, MRackComp, OverDrive, UI::Dialog).",
+      "status": "open",
+      "confidence": "low",
+      "evidence": [
+        "RTTI class-set intersections (ELZ_1 play 3.1.149, CyDrums 1.1.84, SmplTrek 3.2.174)",
+        "strings WTLS/WTDT/WTNM in CyDrums 1.1.84 and ELZ_1 play",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Consistent with CyDrums inheriting from the ELZ_1 play project (adversarial_review note), not proof."
+    },
+    {
+      "id": "ELP-13",
+      "area": "other-products",
+      "claim": "ELZ_1 play 1.1.62 and 2.0.109 contain a UTF-16 USB string descriptor 'SmplTrek' (0xC1541A20, 0xC25F4870) next to the 'ELZ_1 play' ones; 3.1.149 does not.",
+      "status": "observed-file",
+      "confidence": "medium",
+      "evidence": [
+        "UTF-16LE string-descriptor scan of the initialised data of each release",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Whether it is ever sent was not traced; likely a leftover from the SmplTrek code base."
+    },
+    {
+      "id": "MIN-1",
+      "area": "other-products",
+      "claim": "deconstruct MINIMAL 1.0.58 is a cmtd container with product word 16 and a single mmtd v1.0.58 image (no preset image): entry 0xC0A24720, B14 0xC0AB5D20, code 0xC0959C00-0xC0A312C0 (862 KiB), seven sections.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "descriptor dump of firmware/other/MINIMAL_v1.0.58.zip",
+        "analysis/mmtd2elf.py",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "MIN-2",
+      "area": "other-products",
+      "claim": "MINIMAL 1.0.58 has no SD card path: no MMCSD0 address constant, no MMCSD interrupt among its static Hwis (I2C0, EDMA3 CC0, McASP0, GPIO bank 8, UART0, USB0, Timer64P0), and its FatFs disk layer is a 40 MiB RAM disk: disk_read/disk_write memcpy at 0xC1500000 + sector * 512 and disk_ioctl reports 0x14000 sectors of 512 bytes.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "hw_inventory.py census",
+        "Hwi module state 0xC0AB617C via init_data.InitData",
+        "0xC0A1E128 / 0xC0A1E184 (memcpy 0xC0A249A0, address from 0xC0A2B5F0 = 0xC1500000 + arg), 0xC0A1E1E0 (GET_SECTOR_COUNT 0x14000, GET_SECTOR_SIZE 512)",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "The USB mass-storage configuration is present, so the RAM disk is probably what a computer sees (inference). How it is loaded from and saved to flash (HAL::FlashDrv) was not traced."
+    },
+    {
+      "id": "MIN-3",
+      "area": "other-products",
+      "claim": "MINIMAL 1.0.58 has no pixel display: no LCDC or OLED driver, UI strings are at most 8 characters with embedded decimal points, and a 256-entry character map folds text to space, '.', digits and upper-case letters; 37 GPIO outputs (GP6[8..14], GP4[0..14], GP5[0..14]) set up in one function plus an EDMA3 CC1 / TIMER64P2 scan suggest a multiplexed segment/LED display of about six characters.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "hw_inventory.py census (no LCDC)",
+        "string_refs.py (character map 0xC0AAB0F4 used at 0xC097A7A0; labels such as 'PWR.OFF', 'LP.O.OFF')",
+        "GPIO direction wrapper 0xC0A18630 call sites 0xC0A05280-0xC0A054A8",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Character count and segment type are inference from string lengths."
+    },
+    {
+      "id": "MIN-4",
+      "area": "other-products",
+      "claim": "MINIMAL 1.0.58 reads pots and the battery through one analogue path (VRReaderDelegate, VRMedianFilter, VRFluctuationFilter, HAL::ADHandlerComponent, BatteryLevelChecker derived from VRFluctuationFilter) and scans switches DSP-side (ControlSwitchScan : Foundation::DynamicScan); there is no panel MCU UART.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "RTTI classes and bases (rtti_recover.py)",
+        "static Hwis: UART0 only",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "The C6748 has no ADC, so an external converter is implied; its bus was not identified."
+    },
+    {
+      "id": "MIN-5",
+      "area": "other-products",
+      "claim": "MINIMAL 1.0.58's main (64 KiB) task is static at priority 5, where the SmplTrek family and ELZ_1 play 3.1.149 use 3; it has 8 static tasks.",
+      "status": "observed-file",
+      "confidence": "medium",
+      "evidence": [
+        "init_data.py --tasks --b14 0xc0ab5d20 (Task object 0xC0AB39D0)",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": "Field layout read against SYS/BIOS Task_Object as in platform-map (probable)."
+    },
+    {
+      "id": "MIN-6",
+      "area": "other-products",
+      "claim": "MINIMAL 1.0.58 is a drum, TB-303-style bass and sample groove box: classes OSCDrumInst, OSCTB303Generator with TB303Slope/TB303AccSlope/TB303FilterSlope, OSCSampleSynth, QuickSampling, step and real-time recorders with parameter locks; files /Audio/S8, /Audio/S4, /Audio/S2, /Pattern/BANK (.mnp), /Kit (.mnk) and Preferences/Preferences.dat.",
+      "status": "observed-file",
+      "confidence": "medium",
+      "evidence": [
+        "RTTI class list",
+        "string_refs.py: 0xC097A4C0-0xC097DC54",
+        "docs/16-elz1-play-minimal.md"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "ELZ-1",
+      "area": "other-products",
+      "claim": "All seven original ELZ_1 releases (v2.0 2.0.93 to v7.0 7.0.124) address the same on-chip peripherals: INTC, cache control, EDMA3 CC0, PSC0/1, SYSCFG0/1, I2C0, SPI0, McASP0, USB0, LCDC, GPIO and eHRPWM1; no code constant addresses MMC/SD, UART0/1/2, EMIFA, SPI1 or I2C1, and the decoded initialised data of v2.0 and v7.0 holds no MMC/SD, UART, SPI1 or I2C1 base word either.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "python3 -B analysis/hw_inventory.py \"firmware/other/ELZ_1 v<v>.zip\" for all seven (2026-11-23)",
+        "copy-table decode and word scan of v2.0 and v7.0 initialised data (analysis/other_products/elz1/copytab.py, xrel.py)",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Absence is 'not found by this method' (MVK/MVKH constants plus exact data words). The SYS/BIOS timer table is the only peripheral data found."
+    },
+    {
+      "id": "ELZ-2",
+      "area": "other-products",
+      "claim": "The SYS/BIOS timer table in every original ELZ_1 release lists Timer0-3 (0x01C20000, 0x01C21000, 0x01F0C000, 0x01F0D000; two words each), the DA850 device-class form: INT-17 extends to the seven legacy images.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "copy table decoded per release (__TI_auto_init constants, v7.0 0xC141B418/0xC141B424/0xC141B440/0xC141B478), word scan of the output",
+        "docs/17-elz1.md"
+      ],
+      "notes": "2026-11-23. memory_map.py cannot find the legacy copy table (handler table 0x28 bytes before the records), so this used a scratch decoder."
+    },
+    {
+      "id": "ELZ-3",
+      "area": "other-products",
+      "claim": "The original ELZ_1 drives its display through the C6748 LCDC in asynchronous MPU80 LIDD mode (not raster): LIDD clock 186 MHz / 12, CS0 timing 0x00220045, MIPI DCS init 0x11, 0x36=0x40, 0x3A=0x5555, 0x29, and each frame is pushed with 0x2C RAMWR plus LCDC DMA from one of two 153600-byte RGB565 frame buffers laid out as 240 pixels x 320 rows.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "v7.0 LCD init 0xC11C17A4 (clock 0xC11C182C, mode 0xC11D3914, CS0 0xC11D3A58, commands 0xC11C18A0-0xC11C18CA), frame push 0xC11C16B0, buffers 0xC11E2E60 (size 0x25800, base 0xC0F62D80)",
+        "480-byte row stride in the drawing code (e.g. 0xC10A84B0-0xC10A8560, clip {240,320})",
+        "v2.0 same sequence 0xC0DD24B4-0xC0DD24EA; constant counts identical in all seven",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Panel orientation and controller part not settled; no CASET/RASET call found."
+    },
+    {
+      "id": "ELZ-4",
+      "area": "other-products",
+      "claim": "Original ELZ_1 audio runs at 48 kHz through McASP0 with serializer 0 transmit and 1 receive, EDMA ping-pong buffers of 128 32-bit words (64 stereo frames) in L1D RAM (TX 0x11F00000/0x11F00200, RX 0x11F00400/0x11F00600, PaRAM 64-67), identical in all seven releases.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "48000 x25, 48000.0f x151, 1/48000 x79, no 44100 forms (v7.0 constant scan; same picture in all seven)",
+        "PaRAM templates v7.0 0xC1391628-0xC13916A8 and their equivalents per release",
+        "McASP set-up 0xC116EE78: SRCTL calls 0xC116EF84/0xC116EF90",
+        "docs/17-elz1.md"
+      ],
+      "notes": "SmplTrek family blocks are larger (96 frames in Lofi-12 XT/CyDrums, XF-25)."
+    },
+    {
+      "id": "ELZ-5",
+      "area": "other-products",
+      "claim": "On the original ELZ_1 the DSP drives the McASP transmit bit and frame clocks (PDIR outputs AFSX, ACLKX, AXR0; ACLKX internal = AHCLKX/8 with AHCLKX from its pin; receive clocks external), unlike SmplTrek where the codec is clock master; the codec is addressed at I2C0 0x18.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "v7.0 0xC116EFAC (PDIR |= 0x14000001), 0xC116EFC0 (PDIR &= ~0xA0000002), 0xC116EF28 -> 0xC115D0A0 (args 0x20/0/7/0), 0xC116EEE8 -> 0xC115D414 (zeros)",
+        "slave address 24 at 0xC116F164; I2C clock 24000000 at 0xC11AE3B4",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Register semantics read against StarterWare mcasp.c field layouts; frame-sync width, slot format, codec part and codec writes not decoded. Checked in v7.0 only."
+    },
+    {
+      "id": "ELZ-6",
+      "area": "other-products",
+      "claim": "The original ELZ_1 has no panel MCU: keys and switches are scanned by the DSP in a priority-15 SYS/BIOS task (OperatorObserver) that steps 16 phases at 1 ms, driving GPIO bank output registers and reading GPIO input data (MusicalKeyboard = DynamicScan<u64,5,8>: rows bank 1, columns bank 5; ControlSwitch = DynamicScan<u32,4,4>: rows bank 1 bits 12+, columns bank 4).",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "no UART addressed (ELZ-1); RTTI has no panel classes",
+        "scan loop v7.0 0xC11C6C8C-0xC11C6D60; row/column hooks 0xC11A90A0/0xC11A90A8 and 0xC119B940/0xC119B948 via 0xC11E2404 (0x01E26014) and 0xC11E2458 (0x01E26020)",
+        "task priority Task_setPri at 0xC11C6C44",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Row/column hooks read in v7.0 only; the class names and the absence of UARTs hold in all seven."
+    },
+    {
+      "id": "ELZ-7",
+      "area": "other-products",
+      "claim": "The original ELZ_1 stores user data in a FatFs volume on SPI NOR flash (SPI0 at 46.5 MHz, opcodes 0x05 status, 0xD8 and 0x52 erase, 24-bit addresses), shown as 8.00MB in the STORAGE menu and exported over USB mass storage (inquiry 'SNCWR', 'ELZ_1', '1.00'); it has no SD card.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "no MMC/SD base in any release (ELZ-1)",
+        "FlashMemoryManager code v7.0 0xC116CEE4-0xC116D200 (RDSR halfword 0x0005 at 0xC139B990, busy poll 0xC116CF54, 0xD8 at 0xC116CFE8, 0x52 at 0xC116D0C4); SPI clock 0xC118BD68",
+        "MenuStorage 0xC1123F88 returns '8.00MB' or '0.00B'; FatFs mkfs label strings 0xC10A6B6C/0xC10A6BD0",
+        "SCSI inquiry string 0xC1393180, present in all seven",
+        "docs/17-elz1.md"
+      ],
+      "notes": "That the FAT volume (rather than only PREF/preset data) sits on the SPI flash is inference from the absence of any other block device. The flash map is not established."
+    },
+    {
+      "id": "ELZ-8",
+      "area": "other-products",
+      "claim": "The original ELZ_1 USB device descriptors (initialised data) are USB 2.0 with VID/PID 0 at load, one 32-byte single-interface configuration (mass-storage shape) and one 86-byte two-interface configuration (Audio Control + MIDI Streaming, 64-byte bulk endpoints 0x81/0x01); no audio streaming interface; the app also offers USB MIDI host mode. Same in all seven releases.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "v7.0 descriptors 0xC1318B00, 0xC1318B18, config headers 0xC1318D20, 0xC1318D40 in decoded copy-table output; per-release equivalents",
+        "strings MIDI DEVICE MODE / MIDI HOST MODE / Please Check USB Host Cable.; class TestUSBHost",
+        "docs/17-elz1.md"
+      ],
+      "notes": "MIDI on this product is USB only as far as static analysis sees (no UART)."
+    },
+    {
+      "id": "ELZ-9",
+      "area": "other-products",
+      "claim": "The original ELZ_1 user volume uses four directories with fixed extensions, MEMORY/*.e1m, WAVEDATA/*.wav, SEQUENCE/*.e1p and BACKUPDATA/*.ebk (table in initialised data, all seven releases); patches use chunk tag LZ1M, backups ARCV with per-kind sections (APCH, APBB from v7.0, AWD8, AWDG, ASEQ), WAV exports carry a private LoFM chunk, and settings are a PREF record of four-character tags.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "directory table v7.0 0xC139DC90 (v2.0 0xC0F48C10)",
+        "tag code references v7.0: LZ1M 0xC10D84C4, ARCV sections 0xC10C004C-0xC10C06C8, LoFM 0xC1159C30, PREF tags 0xC1101290-0xC1101D94",
+        "default backup name ELZ_1_USERDATA copied by ArchiveSave 0xC11F6980",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Field layouts not decoded. The factory PRESET partitions PPCH/PPBB start with LZ1M, PWD8 with WDL8, PWDG with WFDT, PPTN with SLST."
+    },
+    {
+      "id": "ELZ-10",
+      "area": "other-products",
+      "claim": "The original ELZ_1 PRESET image is pmtd 2.0.30 with partitions PPCH, PWD8, PWDG, PPTN, byte-identical in v2.0 to v6.0; v7.0 ships pmtd 3.0.36 with PPTN enlarged (0x3ED8 to 0x451C) and a new PPBB partition (0xAFBC), matching the MEMORY BANK (bank A/B) feature added in v7.0.",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "container and pmtd partition listing of all seven (analysis/other_products/elz1/container.py)",
+        "MenuMemoryBank class, MEMORY BANK / Bank A / Bank B strings and MBNK tag only in v7.0",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Sizes and kinds only; content not described."
+    },
+    {
+      "id": "ELZ-11",
+      "area": "other-products",
+      "claim": "Every original ELZ_1 release has seven static 76-byte SYS/BIOS Task objects with 2 KiB stacks: six TaskHandler tasks (AsyncTaskHandler 7, main ApplicationDelegate 1, USBTaskHandler 13, FlashMemoryManager 14, Graphics::GraphicsManager 15, OperatorObserver 15) and Idle 0.",
+      "status": "inferred-static",
+      "confidence": "medium",
+      "evidence": [
+        "Task object scan of decoded initialised data, all seven (v7.0 0xC1316170-0xC1316384)",
+        "v7.0 handle globals B14+1460..1528 and Task_setPri (0xC11BA060) call sites 0xC11E7B00, 0xC11ED214, 0xC116CED4, 0xC116884C, 0xC11C6C44; main bound at 0xC119A86C before BIOS_start 0xC11FA900",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Field offsets borrowed from SmplTrek's 92-byte layout (they give consistent values); handle-to-handler mapping read in v7.0, the same relative pattern in the others. Hwis, Swis and the Clock tick not mapped."
+    },
+    {
+      "id": "ELZ-12",
+      "area": "other-products",
+      "claim": "The original ELZ_1 C run-time and SYS/BIOS kernel were not built by any installed toolchain build: CGT 8.3.2, 8.3.9, 8.3.13 and 8.5.0 run-time libraries match only assembly routines and two 32-byte functions (13 unique in v7.0, 12 in v2.0), and the SYS/BIOS 6.76.03.01 match build gives 7 unique matches (62 in SmplTrek 3.2.174).",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "analysis/lib_match.py on v2.0 and v7.0 with each rts6740_elf.lib (also rts64plus/rts6600 for 8.3.2 and 8.3.13)",
+        "lib_match.py with the scratch sysbios.ae674 built from analysis/sysbios_match.cfg",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Which CGT and SYS/BIOS versions were used is open; the Task object is 76 bytes against SmplTrek's 92."
+    },
+    {
+      "id": "ELZ-13",
+      "area": "other-products",
+      "claim": "ELZ_1 play's application layer descends from the original ELZ_1: ELZ_1 v7.0 shares 173 of its 289 RTTI classes with ELZ_1 play 3.1.149 (UI, menus, AUX dialogs, effects, import/export, test mode) against 45 with SmplTrek 3.2.174; no ELZ_1 release has HAL::, AudioEngine::, MIDI:: or TrackSound:: classes, and func_match finds little shared compiled code (82 pairs from SmplTrek, 283 from ELZ_1 play).",
+      "status": "observed-file",
+      "confidence": "high",
+      "evidence": [
+        "rtti_recover.py class lists of ELZ_1 v2.0-v7.0, ELZ_1 play 1.1.62/3.1.149, SmplTrek 3.2.174, Lofi-12 XT 1.5.205, Liven 8bit warps 1.1.62 (2026-11-23)",
+        "func_match.py SmplTrek 3.2.174 -> ELZ_1 v7.0 and ELZ_1 play 3.1.149 -> ELZ_1 v7.0",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Class-name overlap is design lineage, not shared binaries. ELZ_1 also shares its OSCGenerator/OSCObject engine classes with Liven 8bit warps but not with ELZ_1 play."
+    },
+    {
+      "id": "ELZ-14",
+      "area": "other-products",
+      "claim": "Original ELZ_1 feature additions by release, from RTTI and strings: 2.1 master tune and ARENA reverb; 3.0 EFX insert, ping-pong delay, Log/Rev.Log LFO shapes; 4.0 MIDI clock out, sync out and a separate TX channel, with the Sequencer::SequencerEngine class and the 'SEQUENCER' / 'Sync (Thru)' strings removed; 5.0 dual-mono AUX IN, cassette/vinyl and bit-crusher effects; 6.0 per-oscillator editor classes (15) and envelope/cross-fade edit labels; 7.0 memory banks A/B, INFINITY and TUNNEL reverbs, unison voice mode.",
+      "status": "observed-file",
+      "confidence": "medium",
+      "evidence": [
+        "class set differences of the seven rtti_recover.py lists",
+        "grep -cF of each listed string in strings -n 3 output of every release",
+        "docs/17-elz1.md"
+      ],
+      "notes": "Hardware set-up, audio, USB, task table and container layout are unchanged across the seven (see ELZ-1..ELZ-11). A NUL-delimited string diff mis-dated USB MIDI, CUSTOM REVERB, ADSR ENVELOPE and the LED test line (present in all seven); only grep-confirmed items are claimed."
     }
   ]
 }

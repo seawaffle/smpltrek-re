@@ -40,6 +40,8 @@ Step-by-step instructions for the tool: [docs/13-palette-swap-howto.md](docs/13-
 - [Open questions](UNKNOWNS.md) and [the claims registry](claims.json): what is established, at which
   evidence level (device, static, file), and what is still open.
 - [Device records](experiments/README.md): every run on the unit, with hashes, procedure and result.
+- [Other Sonicware products](docs/14-other-products.md): static profiles of the Liven line, the original ELZ_1,
+  ELZ_1 play and MINIMAL, side by side with the SmplTrek family.
 
 ## Repository layout
 
