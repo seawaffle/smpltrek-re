@@ -445,11 +445,14 @@ class CPU:
         `toggle_errors` (a packet dropped as a repeat because its DATA0/DATA1 did not alternate) count since
         the board was enabled. `iso_errors` and `iso_missed` sum the isochronous streams' counts
         (usb_iso_state); `iso_underruns` and `iso_overruns` count how often the device set UNDERRUN or
-        OVERRUN. Reading this changes nothing."""
+        OVERRUN. `speed` is what the last bus reset negotiated: "high" when POWER.HSENAB was set then (the
+        core chirps; POWER.HSMODE reads 1), else "full". The host still runs full-speed traffic, so
+        `high_speed_resets` (bus resets that went to high speed) is for a test to flag. Reading this
+        changes nothing."""
         self.ensure_open()
         fields = (C.c_uint64 * 6)()
         self.checked(self.lib.c6_usb_stats(self.handle, fields))
-        host = (C.c_uint64 * 24)()
+        host = (C.c_uint64 * 26)()
         self.checked(self.lib.c6_usb_host_stats(self.handle, host))
         endpoints = []
         for number in range(1, 5):
@@ -470,7 +473,8 @@ class CPU:
                     queued=host[15], fifo_overflows=host[16], fifo_underflows=host[17],
                     interrupt_mode="core registers (UINT = 1)" if host[18] & 8 else "wrapper (UINT = 0)",
                     pull_up=bool(host[19]), iso_errors=host[20], iso_missed=host[21], iso_underruns=host[22],
-                    iso_overruns=host[23], endpoints=endpoints)
+                    iso_overruns=host[23], speed="high" if host[24] else "full", high_speed_resets=host[25],
+                    endpoints=endpoints)
 
     def usb_attach(self):
         """Plug the cable into a full-speed host: VBUS now. Once the device's pull-up shows (SOFTCONN, with

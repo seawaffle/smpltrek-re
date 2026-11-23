@@ -337,6 +337,31 @@ class Board(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "before execution"):
                 cpu.sd_load(bytes(2 * 1024 * 1024))
 
+    def test_cmd55_carries_rca_0_before_cmd3_and_the_published_rca_after(self):
+        def times_out(cpu, base, index, argument):
+            self.get(cpu, base + 8)
+            self.put(cpu, base + 0x34, argument)
+            self.put(cpu, base + 0x30, index | 0x200)
+            cpu.run(128 * 4)
+            return bool(self.get(cpu, base + 8) & 16)                     # TOUTRS: no response
+        with self.machine() as cpu:
+            cpu.sd_load(bytes(2 * 1024 * 1024))
+            base = self.identify_sd(cpu)
+            self.assertTrue(times_out(cpu, base, 55, 0))                  # transfer state: RCA 1 only
+            self.assertTrue(self.sd_command(cpu, base, 55, 0x10000) & 32)
+            self.sd_command(cpu, base, 0, flags=0x4000)                   # re-initialised: idle, RCA 0
+            self.assertTrue(times_out(cpu, base, 55, 0x10000))
+            self.sd_command(cpu, base, 8, 0x1aa)
+            self.assertTrue(times_out(cpu, base, 55, 0x10000))
+            self.assertTrue(self.sd_command(cpu, base, 55) & 32)
+            self.assertEqual(self.sd_command(cpu, base, 41, 0x40ff8000, 0x600), 0x80ff8000)
+            self.assertTrue(times_out(cpu, base, 55, 0x10000))            # ready
+            self.sd_command(cpu, base, 2, flags=0x400)
+            self.assertTrue(times_out(cpu, base, 55, 0x10000))            # ident
+            self.assertEqual(self.sd_command(cpu, base, 3) >> 16, 1)
+            self.assertTrue(times_out(cpu, base, 55, 0))                  # stand-by: the published RCA only
+            self.assertTrue(self.sd_command(cpu, base, 55, 0x10000) & 32)
+
     def test_sd_dma_short_scr_flush_and_sector_write_match_across_slices(self):
         snapshots = []
         for step, eager in ((1, False), (10000, False), (10000, True)):

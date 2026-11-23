@@ -108,8 +108,8 @@ SdReply SdCard::command(uint32_t index, uint32_t argument, uint64_t cycle) {
         if (!out.write) std::copy_n(image.begin() + argument, 512, out.data.begin());
         state = out.write ? 6 : 5; break;
     case 23: case 58: illegal(); break;
-    case 55:
-        if (argument && argument != 0x10000) { out.responds = false; break; }
+    case 55: // The RCA is 0 until CMD3 publishes one (idle, ready and ident); a card answers no other.
+        if (argument >> 16 != (state < 3 ? 0u : 1u)) { out.responds = false; break; }
         app = true; out.words[0] |= 32; break;
     default: throw std::runtime_error("unsupported SD command " + std::to_string(index));
     }

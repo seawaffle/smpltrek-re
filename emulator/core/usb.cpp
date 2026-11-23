@@ -33,7 +33,7 @@ void Usb::raise(uint16_t tx, uint16_t rx, uint8_t usb) {
 void Usb::core_reset() {
     control = source = mask = 0;
     tx_enable = 1; rx_enable = intrtx = intrrx = 0;
-    faddr = address = power = usb_enable = intrusb = index = 0;
+    faddr = address = usb_enable = intrusb = index = 0; power = POWER_RESET;
     in_service = core_line = faddr_pending = false;
     stage = Stage::Idle;
     rx_ready = tx_ready = sent_stall = data_end = setup_end = send_stall = false;
@@ -45,8 +45,11 @@ void Usb::core_reset() {
 }
 // Reset signalling on the bus (SPRUH79C 33.2.7.1): address and index to 0, FIFOs flushed, the
 // control/status registers cleared, a reset interrupt. Packet sizes and FIFO placement are kept.
+// The speed is negotiated here: a chirp if HSENAB is set.
 void Usb::bus_reset() {
     faddr = address = index = 0; faddr_pending = false;
+    host.high_speed = power & 0x20;
+    if (host.high_speed) host.high_speed_resets++;
     stage = Stage::Idle;
     rx_ready = tx_ready = sent_stall = data_end = setup_end = send_stall = false;
     count0 = read0 = fill0 = size0 = 0;
@@ -337,7 +340,7 @@ void Usb::port_down(uint64_t at) {
     if (!host.queue.empty() && host.queue.front().stage) finish(DISCONNECTED, at);
     host.port = Port::Powered;
     host.port_due = host.sof_due = host.idle_due = host.transfer_due = host.iso_due = UINT64_MAX;
-    host.parked = host.committing = host.reset_active = host.suspended = host.iso_sending = false;
+    host.parked = host.committing = host.reset_active = host.suspended = host.iso_sending = host.high_speed = false;
     host.address = host.configuration = 0;
     for (unsigned n = 1; n < 5; n++) { host.iso_out[n].out.clear(); host.iso_in[n].frames = 0; } // the streams end with the port
 }
@@ -727,7 +730,7 @@ uint8_t Usb::read_core(uint32_t offset) {
     uint8_t value;
     switch (offset) {
     case 0x400: return faddr;
-    case 0x401: return uint8_t(power | host.reset_active << 3 | host.suspended << 1);
+    case 0x401: return uint8_t(power | host.high_speed << 4 | host.reset_active << 3 | host.suspended << 1);
     // The interrupt registers clear on read, a byte at a time here.
     case 0x402: value = uint8_t(intrtx); intrtx &= 0xff00; return value;
     case 0x403: value = uint8_t(intrtx >> 8); intrtx &= 0x00ff; return value;

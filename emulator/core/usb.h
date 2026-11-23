@@ -8,9 +8,15 @@
 
 // C6748 USB0: the TI wrapper, the MUSB core in peripheral mode (endpoint 0 and endpoints 1-4 with the
 // 4 KiB dynamic FIFO RAM) and a scripted full-speed host on the cable, after SPRUH79C chapter 33.
-// Bulk, interrupt and isochronous endpoints carry data. High speed, host/OTG operation, remote wake-up,
+// Bulk, interrupt and isochronous endpoints carry data. Host/OTG operation, remote wake-up,
 // test modes and CPPI DMA traffic are not modelled (the DMA set-up registers a driver programs before
 // any transfer hold their values; DMAEN faults).
+//
+// Speed. POWER comes out of reset with HSENAB set, as on the C6748. The speed is settled during each bus
+// reset: with HSENAB set then, the core chirps, the host (a USB 2.0 host) answers and POWER.HSMODE reads 1
+// until the port goes down; with HSENAB clear the connection is full speed. Traffic is still run at full
+// speed with full-speed rules: a high-speed connection is counted (Host::high_speed_resets) for a test to
+// flag, not modelled.
 //
 // Interrupts (the wrapper's "PDR interrupt handler", CTRLR.UINT). The core latches endpoint events in
 // INTRTX/INTRRX and bus events in INTRUSB whether or not they are enabled in INTRTXE/INTRRXE/INTRUSBE.
@@ -74,6 +80,8 @@ public:
     struct Host {
         Port port = Port::Detached;
         bool vbus = false, sof = true, suspended = false, reset_active = false;
+        bool high_speed = false;         // the last bus reset negotiated high speed (POWER.HSMODE)
+        uint64_t high_speed_resets = 0;
         uint8_t address = 0, configuration = 0;
         uint16_t frame = 0;
         std::array<bool, 5> out_toggle{}, in_toggle{};
@@ -104,9 +112,10 @@ public:
     };
 private:
     enum class Stage : uint8_t { Idle, Tx, Rx, StatusIn, StatusOut };
+    static constexpr uint8_t POWER_RESET = 0x20; // HSENAB
     uint32_t control = 0, source = 0, mask = 0, phy_control = 0;
     uint16_t tx_enable = 1, rx_enable = 0, intrtx = 0, intrrx = 0;
-    uint8_t faddr = 0, address = 0, power = 0, usb_enable = 0, intrusb = 0, index = 0;
+    uint8_t faddr = 0, address = 0, power = POWER_RESET, usb_enable = 0, intrusb = 0, index = 0;
     bool in_service = false, core_line = false, faddr_pending = false;
     // Endpoint 0: one 64-byte FIFO at RAM address 0 for both directions.
     Stage stage = Stage::Idle;

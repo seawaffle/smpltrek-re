@@ -197,6 +197,8 @@ folder; `--long-names` writes VFAT long names (ASCII only), which the default 8.
 synthetic CID/CSD, byte-addressed single/multiblock reads/writes and a clocked 64-byte FIFO with PIO
 or EDMA service; MMCST0 clears every read status flag on read, as TI specifies. EDMA channels 16/17
 handle reads/writes, including short final transfers; CMD6 negotiation advertises default speed.
+The card answers CMD55 only with RCA 0 before CMD3 (idle, ready and ident, so after every CMD0) and
+only with its published RCA (1) after; any other address gets no response, a command timeout.
 Erase, high speed, SDIO and hot-plug are not modelled. The empty socket is the default.
 
 **Audio output.** Both `stock.py` and `custom.py` export `audio.wav` alongside `audio.pcm32`. The WAV
@@ -1144,7 +1146,13 @@ either.
 
 **Limits.**
 
-- Full speed only. DMAEN faults: CPPI DMA has set-up registers only, so the stock card-reader mode
+- Full-speed traffic only. POWER resets with HSENAB (`0x20`) set, as on the C6748, and each bus
+  reset settles the speed from it: set, the core chirps and POWER.HSMODE reads 1 until the port goes
+  down; clear, the connection is full speed. A firmware that only ORs SOFTCONN in therefore reads
+  back high speed, as the unit ran Enaga in session 6. The host still runs full-speed traffic under
+  full-speed rules, so a high-speed connection is not modelled further: `usb_state()` reports
+  `speed` and counts `high_speed_resets` for a test to flag.
+- DMAEN faults: CPPI DMA has set-up registers only, so the stock card-reader mode
   (mass storage over DMA) cannot run.
 - An isochronous stream carries exactly what the test queued, one packet a frame. The host does
   not adapt its rate, and its clock is the guest's, so host and device cannot drift apart: rate

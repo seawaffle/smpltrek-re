@@ -3057,6 +3057,7 @@ int c6_usb_host_stats(void *handle, uint64_t *fields) {
         fields[16] = usb.fifo_overflows; fields[17] = usb.fifo_underflows; fields[18] = usb.wrapper_control();
         fields[19] = usb.connected(); fields[20] = usb.iso_errors(); fields[21] = usb.iso_missed();
         fields[22] = usb.iso_underruns; fields[23] = usb.iso_overruns;
+        fields[24] = host.high_speed; fields[25] = host.high_speed_resets;
     });
 }
 int c6_usb_iso_out(void *handle, uint32_t endpoint, const uint8_t *data, const uint32_t *sizes, uint32_t count) {
