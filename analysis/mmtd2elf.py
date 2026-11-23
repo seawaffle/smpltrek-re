@@ -29,8 +29,43 @@ SHF_WRITE, SHF_ALLOC, SHF_EXECINSTR = 1, 2, 4
 PF_X, PF_W, PF_R = 1, 2, 4
 
 
+def is_legacy(data):
+    """True for the legacy ELZ_1 container: word 4 is the product number, not the file size (INT-15)."""
+    return data[:4] == b"cmtd" and len(data) >= 0x14 and struct.unpack_from("<I", data, 4)[0] != len(data)
+
+
+def legacy_mmtd_sections(data):
+    """(version, entry, [(load_address, bytes)]) of the mmtd image in a legacy ELZ_1 container.
+
+    Descriptor count at 0x10, six-word descriptors from 0x14 (kind, version triplet, offset, size; INT-15);
+    the mmtd header has the version triplet at +4, the entry at +24 and the section count at +28, and the
+    sections ("sect", address, size, bytes) start at +36 as in the current layout. CRCs are not checked here.
+    """
+    integrity.require(data[:4] == b"cmtd", "not a cmtd container")
+    count = struct.unpack_from("<I", data, 0x10)[0]
+    images = []
+    for i in range(count):
+        offset, size = struct.unpack_from("<2I", data, 0x14 + 24 * i + 16)
+        if data[offset:offset + 4] == b"mmtd":
+            images.append(data[offset:offset + size])
+    integrity.require(len(images) == 1, "expected exactly one mmtd image")
+    b = images[0]
+    version = struct.unpack_from("<3I", b, 4)
+    entry, sections_count = struct.unpack_from("<2I", b, 24)
+    sections, pos = [], 36
+    for _ in range(sections_count):
+        magic, address, size = struct.unpack_from("<4sII", b, pos)
+        integrity.require(magic == b"sect", "invalid section header")
+        sections.append((address, bytes(b[pos + 12:pos + 12 + size])))
+        pos += 12 + size
+    integrity.require(pos == len(b), "sections do not exhaust the mmtd image")
+    return version, entry, sections
+
+
 def mmtd_sections(data):
-    """Return (version, entry, [(load_address, bytes)]) for the container's mmtd image."""
+    """Return (version, entry, [(load_address, bytes)]) for the container's mmtd image (either layout)."""
+    if is_legacy(data):
+        return legacy_mmtd_sections(data)
     images = [i for i in integrity.parse(data) if i.tag == "mmtd"]
     integrity.require(len(images) == 1, "expected exactly one mmtd image")
     image = images[0]

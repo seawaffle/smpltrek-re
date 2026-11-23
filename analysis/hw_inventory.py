@@ -180,36 +180,12 @@ def data_words(path):
     return out
 
 
-def is_legacy(data):
-    """True for the legacy ELZ_1 container: word 4 is the product number, not the file size (INT-15)."""
-    return data[:4] == b"cmtd" and len(data) >= 0x14 and struct.unpack_from("<I", data, 4)[0] != len(data)
+is_legacy = mmtd2elf.is_legacy
 
 
 def legacy_mmtd_sections(data):
-    """(entry, [(load_address, bytes)]) of the mmtd image in a legacy ELZ_1 container.
-
-    Descriptor count at 0x10, six-word descriptors from 0x14 with the image offset and size in words 4 and 5
-    (INT-15); the mmtd header has the entry at +24 and the section count at +28, and the sections ("sect",
-    address, size, bytes) start at +36 as in the current layout. CRCs are not checked here.
-    """
-    integrity.require(data[:4] == b"cmtd", "not a cmtd container")
-    count = struct.unpack_from("<I", data, 0x10)[0]
-    images = []
-    for i in range(count):
-        offset, size = struct.unpack_from("<2I", data, 0x14 + 24 * i + 16)
-        if data[offset:offset + 4] == b"mmtd":
-            images.append(data[offset:offset + size])
-    integrity.require(len(images) == 1, "expected exactly one mmtd image")
-    b = images[0]
-    entry, sections_count = struct.unpack_from("<2I", b, 24)
-    sections, pos = [], 36
-    for _ in range(sections_count):
-        magic, address, size = struct.unpack_from("<4sII", b, pos)
-        integrity.require(magic == b"sect", "invalid section header")
-        sections.append((address, bytes(b[pos + 12:pos + 12 + size])))
-        pos += 12 + size
-    integrity.require(pos == len(b), "sections do not exhaust the mmtd image")
-    return entry, sections
+    """(entry, [(load_address, bytes)]) of the mmtd image in a legacy ELZ_1 container (mmtd2elf, INT-15)."""
+    return mmtd2elf.legacy_mmtd_sections(data)[1:]
 
 
 def image_sections(data):
