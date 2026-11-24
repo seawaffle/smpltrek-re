@@ -1032,9 +1032,13 @@ SET_ADDRESS the host waits 2 ms.
   access loads or unloads as many bytes as it is wide.
 - The 4 KiB FIFO RAM with TXFIFOSZ/RXFIFOSZ/TXFIFOADDR/RXFIFOADDR. Packets are stored in that RAM at
   the programmed place, so overlapping FIFOs corrupt each other as they would; endpoint 0 has 64
-  bytes at address 0. Double packet buffering holds two packets (TXPKTRDY then clears at once with
-  an interrupt, FIFOFULL shows two received). Loading past a FIFO's packet size or unloading an
-  empty one is counted in `usb_state()` and otherwise ignored.
+  bytes at address 0. Double packet buffering holds two packets (FIFOFULL shows two received).
+  A TX endpoint interrupts only when TXPKTRDY goes from 1 to 0 (33.2.7.1.2.1.2, TXCSR bit 0):
+  single-buffered, when its packet leaves; double-buffered, at the load if the other half is free,
+  or when a packet leaves a full FIFO. The last packet leaving a double-buffered FIFO only clears
+  FIFONOTEMPTY, with no interrupt; a driver that waits for one stalls, as Enaga's bulk IN did on the
+  unit (session 6, 2026-11-23). Loading past a FIFO's packet size or unloading an empty one is
+  counted in `usb_state()` and otherwise ignored.
 - Endpoint 0's handshake: RXPKTRDY and COUNT0 for SETUP and OUT data, SERV_RXPKTRDY, TXPKTRDY,
   DATAEND, SENDSTALL and SENTSTALL, SETUPEND and SERV_SETUPEND, FLUSHFIFO. A status stage is NAKed
   until DATAEND is set; a token the stage does not expect is answered with STALL, as in 33.2.7.1.1.5.
@@ -1075,8 +1079,8 @@ nothing here adds to `naks` or `toggle_errors`.
   zero-length answers, `short` data packets under `short_below` bytes, and `errors` tokens with no
   answer (not listening, or the endpoint not isochronous) or with a packet above `max_packet`.
 - `usb_state()` adds `iso_errors` and `iso_missed` (the streams' sums), `iso_underruns` and
-  `iso_overruns` (how often the device set UNDERRUN or OVERRUN), and `tx_underrun` / `rx_overrun`
-  per endpoint. A zero-length packet the firmware loaded on purpose counts as `missed` at the host
+  `iso_overruns` (how often the device set UNDERRUN or OVERRUN), `iso_double_sends` (IN tokens that
+  found two packets loaded, below), and `tx_underrun` / `rx_overrun` per endpoint. A zero-length packet the firmware loaded on purpose counts as `missed` at the host
   but is no underrun.
 - `usb_sof(False)`, a bus reset or unplugging stops the streams; the last two also empty them.
   `usb_out` and `usb_in` refuse an isochronous endpoint.
@@ -1086,9 +1090,19 @@ What the device does, from SPRUH79C 33.2.7.1.4:
 - *OUT.* With room in the FIFO the packet is stored, RXPKTRDY is set and the endpoint interrupt is
   raised, as for bulk. With no room the packet is lost and OVERRUN (RXCSR bit 2) is set until
   software writes it 0. Double packet buffering holds two.
-- *IN.* A loaded packet is sent; TXPKTRDY clears and the interrupt is raised at the end of the data
-  packet. With nothing loaded the device sends a zero-length packet and sets UNDERRUN (TXCSR bit 2).
-  SENDSTALL has no effect.
+- *IN.* A loaded packet is sent at the end of its data packet, with the interrupt rule above (so a
+  double-buffered endpoint loaded one packet a frame gets its interrupt at the load, not when the
+  packet leaves). With nothing loaded the device sends a zero-length packet and sets UNDERRUN (TXCSR
+  bit 2). SENDSTALL has no effect.
+- *Two packets loaded.* If both halves of a double-buffered FIFO are loaded at an IN token and neither
+  is held by ISOUPDATE, both leave in that frame and the host records the token as an error (babble); `usb_state()["iso_double_sends"]`
+  counts these tokens. This is a reading of the unit, not of the manual: in session 6 Enaga kept both
+  halves loaded (POWER.ISOUPDATE set, loading at each SOF while TXPKTRDY was clear) and Windows
+  reported 97.7% of IN packets as babble while the firmware's packet ring emptied about twice as fast
+  as one a frame; loading one packet a frame (double- or single-buffered, with or without ISOUPDATE)
+  gave clean audio. A packet loaded after the SOF with ISOUPDATE set does not count until the next
+  SOF, so loading at each SOF stays clean even when the load comes before the token and last frame's
+  packet is still waiting. What the core puts on the wire exactly is not known.
 - *POWER.ISOUPDATE.* A packet loaded into an isochronous IN FIFO is held back until the next SOF;
   an IN token before that gets a zero-length packet, with no UNDERRUN.
 - *SOF.* INTRUSB SOF is latched every millisecond from the end of bus reset, configured or not, and
@@ -1098,9 +1112,15 @@ Timing: an OUT packet of n bytes ends 78 + 8n bit times after the SOF (or after 
 before it in the frame); an IN token ends 39 bit times after, and its data packet 39 + 8n more. For
 48 kHz stereo at 192 bytes that puts the OUT packet in the FIFO 0.13 ms into the frame.
 
-Two things the manual leaves open, and how the model reads them: UNDERRUN and OVERRUN raise no
-interrupt of their own (firmware must not wait for one), and DATAERROR and PID_ERROR are never set
-because the cable has no bit errors. The streams are not scheduled around a control or bulk transfer
+Three things the manual leaves open, and how the model reads them: UNDERRUN and OVERRUN raise no
+interrupt of their own (firmware must not wait for one); DATAERROR and PID_ERROR are never set
+because the cable has no bit errors; and when a double-buffered RX endpoint already holds a second
+packet as software clears RXPKTRDY on the first, RXPKTRDY is set again with a new interrupt. For
+that last point 33.2.7.1.2.2.2 says only that an interrupt comes when a packet is received, TI's
+usblib (StarterWare and the PDK) unloads one packet per interrupt without saying, and the stock
+firmware's bulk FIFOs are single-buffered (its double-buffered isochronous OUT FIFO is unloaded on
+its own schedule), so nothing here settles it; firmware that also checks RXPKTRDY after clearing
+it works either way. The streams are not scheduled around a control or bulk transfer
 that is under way at the SOF; both happen at their own cycles.
 
 **Which interrupt registers to read (CTRLR.UINT).** SPRUH79C says this much:

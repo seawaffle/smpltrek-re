@@ -447,12 +447,14 @@ class CPU:
         (usb_iso_state); `iso_underruns` and `iso_overruns` count how often the device set UNDERRUN or
         OVERRUN. `speed` is what the last bus reset negotiated: "high" when POWER.HSENAB was set then (the
         core chirps; POWER.HSMODE reads 1), else "full". The host still runs full-speed traffic, so
-        `high_speed_resets` (bus resets that went to high speed) is for a test to flag. Reading this
+        `high_speed_resets` (bus resets that went to high speed) is for a test to flag. `iso_double_sends`
+        counts isochronous IN tokens that found both halves of a double-buffered FIFO loaded and not held by ISOUPDATE: both packets
+        leave at once and the stream records an error (babble), as unit session 6 suggests. Reading this
         changes nothing."""
         self.ensure_open()
         fields = (C.c_uint64 * 6)()
         self.checked(self.lib.c6_usb_stats(self.handle, fields))
-        host = (C.c_uint64 * 26)()
+        host = (C.c_uint64 * 27)()
         self.checked(self.lib.c6_usb_host_stats(self.handle, host))
         endpoints = []
         for number in range(1, 5):
@@ -474,6 +476,7 @@ class CPU:
                     interrupt_mode="core registers (UINT = 1)" if host[18] & 8 else "wrapper (UINT = 0)",
                     pull_up=bool(host[19]), iso_errors=host[20], iso_missed=host[21], iso_underruns=host[22],
                     iso_overruns=host[23], speed="high" if host[24] else "full", high_speed_resets=host[25],
+                    iso_double_sends=host[26],
                     endpoints=endpoints)
 
     def usb_attach(self):

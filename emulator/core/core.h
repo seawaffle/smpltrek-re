@@ -132,12 +132,13 @@ int c6_usb_run(void *machine, uint32_t id, uint64_t budget);
 /* The host forgets an endpoint's data toggle (address with bit 7 for IN), as after SET_INTERFACE. It does
    so itself after SET_CONFIGURATION (all) and CLEAR_FEATURE(ENDPOINT_HALT) (one). */
 int c6_usb_toggle_reset(void *machine, uint32_t endpoint);
-/* fields[24]: port (0 detached, 1 waiting for the pull-up, 2 debounce, 3 reset, 4 enabled), VBUS, the
+/* fields[27]: port (0 detached, 1 waiting for the pull-up, 2 debounce, 3 reset, 4 enabled), VBUS, the
    address the host uses, configuration, the address the device answers to, bus resets, SOF on, SOFs sent,
    frame, suspended, NAKs, STALLs, errors, data-toggle errors, transfers finished, transfers queued, FIFO
    bytes overflowed, FIFO bytes underflowed, CTRLR, pull-up present, isochronous errors (the streams'
    `errors` and frames whose streams could not start), isochronous frames missed (the streams' `missed`),
-   times the device set UNDERRUN, times it set OVERRUN. */
+   times the device set UNDERRUN, times it set OVERRUN, high speed negotiated at the last bus reset, bus
+   resets that went to high speed, isochronous IN tokens that found both FIFO halves loaded and released. */
 int c6_usb_host_stats(void *machine, uint64_t *fields);
 /* Endpoint 1 to 4. fields[14]: TXMAXP, RXMAXP, TXFIFOSZ, RXFIFOSZ, TXFIFOADDR, RXFIFOADDR, packets waiting
    to go, packets waiting to be unloaded, IN stalled, OUT stalled, TXCSR high byte, RXCSR high byte,

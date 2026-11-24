@@ -144,6 +144,7 @@ private:
     static unsigned slots(uint8_t sz) { return sz & 16 ? 2 : 1; }
     uint8_t &cell(uint16_t add, uint8_t sz, unsigned slot, unsigned at) { return ram[(add * 8u + slot * slot_size(sz) + at) & 4095]; }
     void tx_commit(unsigned n);
+    void tx_depart(unsigned n);
     void rx_pop(unsigned n);
     void status_done();
     // The device's side of a transaction addressed to it.
@@ -154,7 +155,7 @@ private:
     Handshake in_response(unsigned n, size_t &size) const;
     unsigned iso_out(unsigned n, const uint8_t *data, size_t size);
     bool iso_in_token(unsigned n, size_t &size, bool &loaded);
-    void iso_in_data(unsigned n, std::vector<uint8_t> &data);
+    unsigned iso_in_data(unsigned n, std::vector<uint8_t> &data);
     void bus_reset();
     void bus_activity(uint64_t at);
     // The host.
@@ -174,6 +175,7 @@ public:
     uint64_t resets = 0, interrupts = 0;
     uint64_t fifo_overflows = 0, fifo_underflows = 0; // bytes loaded past a FIFO's packet size, or unloaded from an empty one
     uint64_t iso_underruns = 0, iso_overruns = 0;     // times the device set UNDERRUN or OVERRUN
+    uint64_t iso_double_sends = 0;                    // isochronous IN tokens met with both FIFO halves loaded, neither held
     std::function<bool()> clock_running;
     std::function<void()> interrupt;
     void advance(uint64_t cycle);

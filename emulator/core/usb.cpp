@@ -115,8 +115,7 @@ Usb::Handshake Usb::token_in(unsigned n, std::vector<uint8_t> &data, bool &data1
         unsigned slot = e.tx_head % slots(e.txsz);
         for (unsigned i = 0; i < size; i++) data.push_back(cell(e.txadd, e.txsz, slot, i));
         data1 = e.tx_toggle; e.tx_toggle = !e.tx_toggle;
-        e.tx_head = uint8_t((slot + 1) % slots(e.txsz)); e.tx_packets--;
-        raise(uint16_t(1u << n), 0, 0);
+        tx_depart(n);
         return answer;
     }
     if (answer == Handshake::Stall) {
@@ -209,14 +208,31 @@ bool Usb::iso_in_token(unsigned n, size_t &size, bool &loaded) {
     return true;
 }
 // The end of the data packet that followed: the packet leaves the FIFO (unless it was flushed meanwhile).
-void Usb::iso_in_data(unsigned n, std::vector<uint8_t> &data) {
+// With both halves of a double-buffered FIFO loaded and neither held by ISOUPDATE, both leave in this one
+// data packet: a babble at the host. That is a reading of unit session 6 (Enaga, 2026-11-23), not of the
+// manual; see the README. Returns the number of packets that left.
+unsigned Usb::iso_in_data(unsigned n, std::vector<uint8_t> &data) {
     auto &e = endpoints[n];
     data.clear();
+    unsigned ready = e.tx_packets - e.tx_held, count = ready >= 2 ? 2 : e.tx_packets ? 1 : 0;
+    if (count == 2) iso_double_sends++;
+    for (unsigned k = 0; k < count; k++) {
+        unsigned slot = e.tx_head % slots(e.txsz);
+        for (unsigned i = 0; i < e.tx_size[slot]; i++) data.push_back(cell(e.txadd, e.txsz, slot, i));
+        tx_depart(n);
+    }
+    return count;
+}
+// A packet leaves endpoint n's FIFO. TXPKTRDY reads 1 only while the FIFO has no room for another packet,
+// and the endpoint interrupts only when it goes from 1 to 0 (SPRUH79C 33.2.7.1.2.1.2, TXCSR bit 0): when
+// a double-buffered FIFO had both packets, not when the only one leaves (FIFONOTEMPTY then just drops).
+void Usb::tx_depart(unsigned n) {
+    auto &e = endpoints[n];
     if (!e.tx_packets) return;
-    unsigned slot = e.tx_head % slots(e.txsz);
-    for (unsigned i = 0; i < e.tx_size[slot]; i++) data.push_back(cell(e.txadd, e.txsz, slot, i));
-    e.tx_head = uint8_t((slot + 1) % slots(e.txsz)); e.tx_packets--;
-    raise(uint16_t(1u << n), 0, 0);
+    bool full = e.tx_packets >= slots(e.txsz);
+    e.tx_head = uint8_t((e.tx_head + 1) % slots(e.txsz)); e.tx_packets--;
+    e.tx_held = std::min(e.tx_held, e.tx_packets);
+    if (full) raise(uint16_t(1u << n), 0, 0);
 }
 void Usb::tx_commit(unsigned n) {
     auto &e = endpoints[n];
@@ -397,8 +413,8 @@ void Usb::iso_step(uint64_t at) {
         return;
     }
     std::vector<uint8_t> data;
-    if (host.iso_loaded) iso_in_data(n, data);
-    if (data.size() > stream.packet) { stream.errors++; record(2, {}); }
+    unsigned sent = host.iso_loaded ? iso_in_data(n, data) : 0;
+    if (sent > 1 || data.size() > stream.packet) { stream.errors++; record(2, {}); } // babble
     else if (data.empty()) { stream.missed++; record(1, {}); }
     else {
         stream.packets++; stream.bytes += data.size();
