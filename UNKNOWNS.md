@@ -22,20 +22,20 @@ Products: S = SmplTrek, L = Lofi-12 XT, C = CyDrums, all = all three.
 | Update container and CRCs | Fully decoded and resealable; seeds for 14+ products (INT-1..INT-6) | single-release seeds (F) |
 | Bootloader 1.0.17 | Traced statically (`docs/05-bootloader.md`); BOOT MODE, recovery, cache hand-off observed (HW-24, HW-52, D0) | logo code, flags, version rules on device (S, D) |
 | SPI flash | Layout from the A4 dump; Macronix 128 Mbit x 2, device 0 boot area protected (HW-54) | protect-bit reading, Lofi and CyDrums layouts (S, D) |
-| Clocks, DDR, PSC | PLL and divisors decoded (hardware-access "State the bootloader leaves") | DDR timing fields, PSC state at the jump, 744 MHz caveat (S, D) |
+| Clocks, DDR, PSC | PLL and divisors decoded (hardware-access "State the bootloader leaves"); no clock or voltage scaling after boot (HW-73) | DDR timing fields, PSC state at the jump, 744 MHz caveat (S, D); regulator adjustability (B) |
 | CPU behaviour | Misaligned (all widths, DDR and L2), low and EMIFA reads and stores, reciprocal tables, interrupts in NOP and IDLE measured (HW-57, HW-58, HW-60, HW-62 to HW-67) | the held load data's side (L6), the NOP phase pattern, uncached regions (D) |
 | Panel MCU link | Set-up, parser, pad stream rate, LED commands (HW-36, HW-39, HW-46, HW-55) | command meanings, A1 bytes 0-2, start-up needs (D) |
 | Keys and encoders | Matrix, bit map, release filter, STEP 1 bounce (HW-47, HW-51, HW-56) | other keys' bounce, filter mechanism, encoder steps on device (S, D) |
 | Pads | Channel table, thresholds, hold timings, rate (HW-47, HW-55); Lofi pressure and CyDrums aftertouch (XF-23) | which pages take pressure, CyDrums AT settings, pad feel under foreign apps (S, D) |
 | LEDs | Addressing, colours, all buttons, who drives row 0 (HW-48, HW-49) | 101 addresses unseen on the unit, level steps, many callers (Sim, D) |
 | Display | Frame layout observed (HW-35); OLED init replayed | controller family, draw_text mode argument (S, B) |
-| Audio hardware | Codec, McASP, EDMA, routing, REC SRC, PAD (HW-14..HW-17, HW-26..HW-30) | eleven pins' electrics, MCLK source, receive-side channel order (D; output side observed, HW-61) |
+| Audio hardware | Codec, McASP, EDMA, routing, REC SRC, PAD (HW-14..HW-17, HW-26..HW-30); pin use, bypass routes, no AGC, 48 kHz only (HW-70..HW-72) | eleven pins' electrics, MCLK source, receive-side channel order, bypass and 96 kHz on the board (D; output side observed, HW-61) |
 | Audio engine and mixer | Block order, sources, gains, EQ, effect racks, file player, metronome (AUD-13, AUD-1..12) | per-class track renders, recorder details, most effect parameters (S, Sim) |
 | Sequencer and sound engine | Clock positions, SYNC tempo (HW-27, HW-31) | VoiceTrack writer, step code, voices: almost unmapped (S) |
 | Settings (PREF / PREX) | Every validator, ranges, defaults, many labels (XF-6, XF-13, XF-17) | dozens of unlabelled fields per product (S) |
 | Content formats | WAV streams, AFTG and ORSL chunks, PDPT container (XF-11, XF-12) | PDPT fields, slice and tag records, CyDrums SystemCore (F, S) |
 | SD card | Command layer, controller, ISR, FatFs disk layer (HW-23, HW-25, HW-42..HW-45) | origin, speed in practice, CyDrums write paths (S, Sim, D) |
-| USB | Bring-up, descriptors, usblib origin, MIDI task context, audio path, same in all products (HW-12, HW-18, HW-40, HW-59, XF-10, XF-25) | class-code origin (S) |
+| USB | Bring-up, descriptors, usblib origin, MIDI task context, audio path, same in all products (HW-12, HW-18, HW-40, HW-59, XF-10, XF-25); device-only, no host path (HW-69) | class-code origin (S); ID and VBUS wiring for host mode (D) |
 | MIDI and SYNC | DIN UART, settings, receive slots, SYNC IN/OUT (HW-27, HW-31) | handler bodies, UART2, SYNC electrics (S, B) |
 | Power | Power manager, hold latch, keys, battery thresholds (XF-8, HW-24) | battery channel, GP3[7], busy checks (S, D) |
 | RTOS and memory | Tasks, Hwi/Swi, SYS/BIOS 6.76.03.01, heap, copy table (XF-7, LIB-3, MEM-1) | run-time use of the DDR gap, heap headroom (S, D) |
@@ -129,6 +129,9 @@ Mapped in `docs/06-audio-engine.md`, claims AUD-1..AUD-12 (2026-11-17).
 - Why PLLOUT 744 MHz exceeds SPRS590 Table 6-4's 600 MHz; whether the ROM table is SPRAB41's (SPRS590 cites SPRAAT2).
   `04-hardware-access.md` "State the bootloader leaves, and the clocks". S, D
 - Which PSC modules BOOT 1.0.17 leaves on at the jump. `04-hardware-access.md` "State the bootloader leaves, and the clocks". S, D
+- Clock and voltage scaling (HW-73): whether the core regulator is fixed or adjustable (no I2C or known GPIO control
+  in code); whether the app runs correctly with PLL0 lowered (the peripheral dividers to rescale are listed in
+  `04-hardware-access.md` "No clock or voltage scaling after boot"). B (regulator), D (PLL0)
 - Whether 0xC16FFA98..0xC4000000 (0xC3C00000 in L and C) is used at run time (heaps, stacks, computed addresses).
   `07-ram-allocation.md` "Finding", `01-platform-map.md` "Image layout". S, D
 - Heap: whether HeapMem 0xC16EE910 is the only allocator, project and sample lifetimes, teardown paths (0xC154D828,
@@ -203,6 +206,14 @@ Mapped in `docs/06-audio-engine.md`, claims AUD-1..AUD-12 (2026-11-17).
 - The McASP DIT functions after 0xC16158A0. S
 - EDMA channels 25 / 26 under I2C0 after the SPRS590 correction; registers 86 / 93 bits 1:0. S
 - The codec part (AIC3106 against 3104 / 3105). B (marking)
+- Codec analog bypass (HW-70): whether PGA_L/R → LEFT/RIGHT_LOP (registers 81, 91 with 41 = 0 and 82 = 92 = 0x80)
+  gives clean zero-latency monitoring, and how the passive LINE1 → LOP switches (108 = 0x33) sound. Device check: a
+  tone on INPUT L/R, listen on the line out and phones while stepping through those writes. Also whether LINE2L/R,
+  MIC3L or the HP drivers are wired at all: route each to the line outputs or power it from DAC_L2/R2 with a signal
+  on every jack. D, B
+- 96 kHz (HW-72): register 7 = 0x6A with the stock McASP set-up. Device check: count EDMA ring completions against
+  TIMER64P1 (24 MHz crystal) at 7 = 0x0A and 0x6A. That gives fs and, at 48 kHz, MCLK to crystal accuracy without a
+  probe, and shows whether the board passes 96 kHz cleanly (a sweep on the line out). D
 
 ### Display
 - The controller family (SSD1327 by its commands, inference); grey 0 = black. B, D
@@ -220,6 +231,15 @@ Mapped in `docs/06-audio-engine.md`, claims AUD-1..AUD-12 (2026-11-17).
 - Whether any stock caller sends USB SysEx (`MIDIStreamUSB::write` mode != 0); whether 1.0.65 exposed USB MIDI. S, F
 - The reserved words with a host attached; the task context of USB MIDI on hardware. D
 - Why the DSP crystal is the codec PLL trim reference for an adaptive OUT endpoint. S
+- USB host (HW-69): whether the micro-B receptacle's ID contact reaches USB0_ID, and whether USB0_DRVVBUS switches a
+  5 V supply onto VBUS (and how much current). Device check, no host cable attached: with nothing plugged in and then
+  with a passive OTG adapter alone, set DEVCTL SESSION (USB0 + `0x460` bit 0) and read DEVCTL back. With a wired ID
+  and the adapter in, B-DEVICE (bit 7) reads 0 and HOST-MODE (bit 2) 1. VBUS (bits 4:3) reaching "above VBUS valid"
+  with no other supply shows DRVVBUS powers VBUS; a meter on the adapter's VBUS gives the voltage. Clear SESSION
+  afterwards. D (the current limit: B)
+- Whether the stock card-reader mode runs at high speed: the manual lists mass storage as "USB2.0 High Speed",
+  audio and MIDI as Full Speed, but `usb_dcd_init` writes POWER = 0x40 (HSENAB off). The card-reader path's POWER
+  writes were not traced. S
 
 ### MIDI and SYNC
 - The MIDI receive handler bodies per product; MIDI word [2] in Lofi and CyDrums. `01-platform-map.md` "MIDI". S

@@ -875,6 +875,70 @@
       "notes": "2026-11-18. On the AC adapter, no batteries: channel 15 (battery) read 0, 4 and 6; its level on batteries not measured. The order in pad names (HW-47): TRK 8, TRK 10, TRK 2, TRK 4, TRK 6, TRK 7, GLOBAL 3, EXT SRC, battery, TRK 9, TRK 1, TRK 3, TRK 5, GLOBAL 1, GLOBAL 2, USB AUDIO. The capture of a pad press's rise (P6) failed: its trigger (first level above 0) fired on idle noise."
     },
     {
+      "id": "HW-69",
+      "area": "hardware",
+      "claim": "No SmplTrek-family image has a USB host path: usblib's USBOTGSessionRequest (SmplTrek 0xC15E1FC8, Lofi-12 XT 0xC2C21C28, CyDrums 0xC2545028) and the linked USBHost* functions have no caller, address pair or stored pointer in SmplTrek 3.2.174, Lofi-12 XT 1.5.205 or CyDrums 1.1.84. Bring-up leaves CFGCHIP2 USB0OTGMODE at 0, so the PHY's ID comparator alone would decide the role; USB0_DRVVBUS is a dedicated ball (K18). Whether ID is wired and whether DRVVBUS switches a 5 V VBUS supply is board wiring, not visible to code.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "work/<image>.dis listings: no branch or call to the functions, no MVK/MVKH pair building their addresses, no loaded word equal to them; the same search finds USBReset's caller in usb_dcd_init (2026-11-24)",
+        "docs/04-hardware-access.md \"USB device\" step 1 (CFGCHIP2 = 0x0972, USB0OTGMODE 0) and \"USB host\"",
+        "TI SPRS590G Table 3-21 (USB0_ID P16, USB0_DRVVBUS K18); SPRUH79C 33.2.5 (DRVVBUS driven high as host in session), Table 33-84 (DEVCTL)",
+        "SmplTrek v3 Reference Manual r2, \"Specs\": micro USB Type-B port, no host function listed"
+      ],
+      "notes": "2026-11-24, for Enaga's next features. The original ELZ_1's MIDI HOST MODE uses an OTG host cable on its single port and ELZ_1 play has a separate Type-A host port (500 mA): different boards. Device check in UNKNOWNS.md \"USB\"."
+    },
+    {
+      "id": "HW-70",
+      "area": "hardware",
+      "claim": "Of the AIC3106's pins, the code places LINE1L/R (fully differential, INPUT L/R) and MIC3R (built-in mic) as inputs and LEFT_LOP/M and RIGHT_LOP/M as the only outputs; MIC3L, LINE2L/R and the HPLOUT/HPROUT/HPLCOM/HPRCOM and MONO drivers are never used, so their wiring is unknown. The data sheet offers two analog routes between pins the code shows wired that no image uses: PGA_L/R to the line outputs through the line-output mixers (registers 81, 84, 88, 91; needs register 41 back at DAC_L1/R1 and 82 = 92 = 0x80 for the DAC) and the passive LINE1 to LOP/M switches (register 108 = 0x33). The dormant HPLCOM/HPRCOM functions (registers 54, 58, 71) route only the DAC.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": [
+        "docs/04-hardware-access.md \"Codec registers\", \"Inputs\", \"Codec pins, as far as the code shows\", \"Analog bypass\"",
+        "TI SLAS509G sections 10.3.5, 10.4.1.2, 10.4.1.3, Tables 10-49, 10-89 to 10-102, 10-117",
+        "HW-61 (the headphones carry the line-output signal on the unit)"
+      ],
+      "notes": "2026-11-24. How the routes sound on this board, and whether the unused pins are wired, needs a device session (UNKNOWNS.md \"Audio hardware\")."
+    },
+    {
+      "id": "HW-71",
+      "area": "hardware",
+      "claim": "No SmplTrek-family image enables the codec's AGC or its DAC-side digital effects or de-emphasis filters: codec_write's 86 call sites (same register arguments in SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84) never write registers 26 to 33, and register 12 is written only as 0x50 (ADC high-pass on, D3-D0 = 0).",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "work/<image>.dis: the register argument (B4) at every call to codec_write (SmplTrek 0xC1671CC4, Lofi-12 XT 0xC2CA8324, CyDrums 0xC25C1A04); the computed ones are the dormant output functions and the routing read-modify-writes, which analysis/codec_map.py runs (2026-11-24)",
+        "TI SLAS509G Table 10-20, Tables 10-34 to 10-41"
+      ],
+      "notes": "2026-11-24. Covers the three products on this board; other Sonicware products not checked."
+    },
+    {
+      "id": "HW-72",
+      "area": "hardware",
+      "claim": "The codec always runs at 48 kHz: codec_set_sample_rate (SmplTrek 0xC161D560, Lofi-12 XT 0xC2C5B8C0, CyDrums 0xC25766A0) selects the 44.1 kHz PLL values only for an argument of 44,100, and its only caller in each image passes the constant 48,000; no image sets dual rate (register 7 is 0x0A). ELZ_1 play 3.1.149 has the same function (0xC27EE980; its 44,100 constant at 0xC27EE994/0xC27EE998 is the compare) and also calls it once with 48,000 (0xC27D1854). Dual rate (register 7 = 0x6A) is the data sheet's 96 kHz with fs(ref) left at 48 kHz.",
+      "status": "inferred-static",
+      "confidence": "high",
+      "evidence": [
+        "work/<image>.dis at the addresses named (mvk -21436 = 0xAC44; caller's mvk -17536 / mvkh 0 = 0xBB80); ELZ_1 play listing from analysis/mmtd2elf.py and objdump (2026-11-24)",
+        "TI SLAS509G section 10.3.3.2, Table 10-15"
+      ],
+      "notes": "2026-11-24. The request placed 0xC27EE998 in CyDrums; it is in ELZ_1 play. Whether the board passes 96 kHz cleanly is a device question (UNKNOWNS.md \"Audio hardware\")."
+    },
+    {
+      "id": "HW-73",
+      "area": "hardware",
+      "claim": "No SmplTrek-family image changes the clocks or the core voltage after boot: none addresses PLLC0 or PLLC1, the only I2C slave is the codec (I2C1 unused), and no GPIO the apps drive has a known supply role. The C6748's 372 MHz needs the CVDD 1.2 V operating point (375 MHz; 200 MHz at 1.1 V, 100 MHz at 1.0 V).",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": [
+        "analysis/hw_inventory.py on SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84 (2026-11-24): no PLLC0 or PLLC1 constants",
+        "docs/01-platform-map.md \"Other buses\" and \"SYNC, MIDI, USB, power, other buses\"",
+        "TI SPRS590G \"Recommended Operating Conditions\" (FPLL0_SYSCLK1,6 per CVDD operating point)"
+      ],
+      "notes": "2026-11-24. Whether the board's regulator is adjustable at all is board knowledge (B). medium-high because hw_inventory finds addresses built as MVK/MVKH pairs only."
+    },
+    {
       "id": "XF-20",
       "area": "cross-product",
       "claim": "The GPIO, codec and peripheral layer is the same in all 13 releases of SmplTrek (1.0.65-3.2.174), Lofi-12 XT (1.1.156, 1.2.179, 1.5.205) and CyDrums (1.1.84, 2.0.97 beta): 31 gpio_pin_number sites with the same constants, 28 direction calls (inputs GP3[8], GP4[0]), 46 gpio_write, 17 gpio_read and 6 gpio_read_bank16 sites over the same pins, bank 7 the only GPIO interrupt, 12 direct GPIO sites. GP3[8] is the only jack-like input in every release; no release touches codec registers 13, 14, 96 or 97. The one change: codec register 12 = 0x50 moved from codec_adc_hpf_init (SmplTrek <= 2.0.129) to audio start (>= 3.0.148).",
