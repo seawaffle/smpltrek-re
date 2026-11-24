@@ -158,7 +158,7 @@ class UsbDisconnected(unittest.TestCase):
             self.assertEqual(self.get(cpu, BASE + 4), 1)
             cpu.run(1)
             self.assertEqual(self.get(cpu, BASE + 4), 0)
-            self.assertEqual(self.get(cpu, BASE + 0x401, 1), 0)
+            self.assertEqual(self.get(cpu, BASE + 0x401, 1), 0x20)       # HSENAB, as the core comes out of reset
             self.assertEqual(self.get(cpu, BASE + 0x2c), 0)
             self.assertEqual(cpu.usb_state()["soft_resets"], 1)
 
@@ -354,6 +354,29 @@ class UsbHost(unittest.TestCase):
             self.put(cpu, BASE + 0x410, tx[2], 2)
             self.put(cpu, BASE + 0x412, 0x40, 1)                          # CLRDATATOG
         self.put(cpu, BASE + 0x40e, 0, 1)
+
+    def test_hsenab_is_set_at_reset_and_decides_the_speed_at_each_bus_reset(self):
+        with self.device(connect=False) as cpu:
+            self.assertEqual(self.get(cpu, BASE + 0x401, 1), 0x20)
+            cpu.usb_attach()
+            self.put(cpu, BASE + 0x401, 0x60, 1)                          # SOFTCONN ORed in: HSENAB stays on
+            cpu.run(DEBOUNCE)
+            self.assertEqual(self.get(cpu, BASE + 0x401, 1), 0x78)       # the chirp: HSMODE from the reset on
+            cpu.run(RESET)
+            state = cpu.usb_state()
+            self.assertEqual((self.get(cpu, BASE + 0x401, 1), state["speed"], state["high_speed_resets"]), (0x70, "high", 1))
+            self.put(cpu, BASE + 0x401, 0x40, 1)                          # HSENAB off: the speed holds until a reset
+            self.assertEqual(self.get(cpu, BASE + 0x401, 1), 0x50)
+            cpu.usb_reset()
+            cpu.run(RESET)
+            state = cpu.usb_state()
+            self.assertEqual((self.get(cpu, BASE + 0x401, 1), state["speed"], state["high_speed_resets"]), (0x40, "full", 1))
+            self.put(cpu, BASE + 0x401, 0x60, 1)
+            cpu.usb_reset()
+            cpu.run(RESET)
+            self.assertEqual((self.get(cpu, BASE + 0x401, 1), cpu.usb_state()["high_speed_resets"]), (0x70, 2))
+            cpu.usb_detach()                                              # the port goes down: HSMODE clears
+            self.assertEqual((self.get(cpu, BASE + 0x401, 1), cpu.usb_state()["speed"]), (0x60, "full"))
 
     def test_attach_waits_for_the_pull_up_then_debounces_resets_and_sends_sof(self):
         with self.device(connect=False, sof=True) as cpu:

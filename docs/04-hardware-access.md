@@ -1008,7 +1008,7 @@ The stack is TI StarterWare usblib (platform map, "USB"; BSD-licensed). Bring-up
 2. `usb_dcd_init` (`0xC158EE00`): PSC1 module 1 on; CTRLR = 1 (reset; clears itself); PHY on (`0xC1694C60`:
    CFGCHIP2 bits 15, 10, 9 cleared, bit 6 PLL on set, then a wait until bit 17 USB0PHYCLKGD reads 1); INTCLRR = 0;
    INTMSKSETR = `0x01FF1E1F` (all endpoint and USB interrupts); MUSB INTRUSBE = `0x2F`, INTRTXE = INTRRXE = `0xFFFF`;
-   POWER = `0x40` (SOFTCONN: attach). HSEN is not set, so the device runs at full speed (12 Mbit/s), which fits the
+   POWER = `0x40` (SOFTCONN: attach). This clears HSENAB (`0x20`), which the core's reset sets, so the device runs at full speed (12 Mbit/s), which fits the
    descriptors' bcdUSB 1.10.
 3. CPU interrupt 12 (event 19); the handler is usblib's `USB0DeviceIntHandler`.
 
