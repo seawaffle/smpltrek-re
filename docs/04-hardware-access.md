@@ -112,6 +112,21 @@ clock's step threshold, 48,000 x 60 x 10; see "SYNC IN / SYNC OUT").
   `0xC4`, SDCR `0x00139822` (one AIS copy `0x00139832`), SDTIMR1 `0x264A3209`, SDTIMR2 `0x3C14C722`, SDRCR 1170
   (7.8 us at 150 MHz, the usual DDR2 refresh interval), Arg8 0 (CLK2XSRC 0). The SDCR / SDTIMR fields are not
   decoded here.
+- **No clock or voltage scaling after boot** (static, 2026-11-24; HW-73):
+  - No app image addresses PLLC0 (`0x01C11000`) or PLLC1 (`0x01E1A000`): `hw_inventory.py` finds neither in
+    SmplTrek 3.2.174, Lofi-12 XT 1.5.205 or CyDrums 1.1.84. The CPU stays at the bootloader's 372 MHz.
+  - The core supply is not under software control as far as the code shows. I2C0 has one slave, the codec at 0x18
+    (platform map, "Other buses", SmplTrek), and I2C1 is unused in every product (platform map, "SYNC, MIDI, USB,
+    power, other buses"), so the apps talk to no PMIC. No GPIO the app drives has a
+    known supply role, though several audio-side pins are unexplained (GP4[12..15]).
+  - The data sheet ties speed to voltage. SPRS590G gives 375 MHz at the CVDD 1.2 V operating point, 200 MHz at 1.1 V
+    and 100 MHz at 1.0 V ("Recommended Operating Conditions", FPLL0_SYSCLK1,6). So the unit's 372 MHz needs the
+    1.2 V point. Lowering the clock alone, by reprogramming PLL0 as SPRUH79 chapter 7 describes, cuts dynamic power
+    without a regulator.
+  - What a slower PLL0 would move: everything on SYSCLK2/ASYNC3/SYSCLK4 (UART0/1 baud divisors, SPI0/1 and MMCSD
+    dividers, EDMA, GPIO; the SPI driver's 186 MHz constant). Not affected: McASP and the codec (external
+    clocks), and TIMER64P0/P1, I2C0 and the USB PHY, which run from the 24 MHz oscillator directly. Whether the
+    regulator is adjustable at all is board knowledge (B).
 - **Power hold:** `power_on_check` drives GP4[11] high and never sets its direction (simulated). The bootloader runs
   the same function first and has latched the power hold before it jumps to SYSTEM (**device**, HW-24, session D0),
   so GP4[11] is already high when the app starts; that it is already an output is inference (HW-8). Releasing it
@@ -920,6 +935,60 @@ GP4[12..15] before the supply goes. A quieter power-off would add, before releas
 (the reverse order `0xC1649448(0)` implements but nobody calls), then 37 = 0 and a wait for the DAC power-down flag
 (register 94, T10-103) before dropping the supply (inference from the data sheet; not tried).
 
+**Codec pins, as far as the code shows** (2026-11-24; HW-70). The code places a pin only where the stock routes signal
+through it; any other pin may still be wired to something.
+
+| Pins | Role | Evidence |
+|---|---|---|
+| LINE1LP/M, LINE1RP/M | INPUT L and INPUT R, fully differential, after the board's Hi-Z / mic / PAD stages | static and simulated (inputs above; HW-17, HW-28) |
+| MIC3R | built-in mic | static and simulated (REC SRC 0) |
+| MIC3L, LINE2L/R | not used by any image; wiring unknown | never connected (17 = 18 = 0xFF sets MIC3L off; no write to 80, 83, 87, 90 or the LINE2 bypass bits of 40) |
+| LEFT_LOP/M, RIGHT_LOP/M | line outputs; the headphone jack and speaker hang off them | static; headphones carry them (device, HW-61) |
+| HPLOUT, HPROUT, HPLCOM, HPRCOM, MONO_LOP/M | never powered by these three images; wiring unknown | static (51, 58, 65, 72, 79 keep reset) |
+
+**Analog bypass: routes the AIC3106 offers between wired pins** (data sheet SLAS509G, 2026-11-24; never used by
+any image):
+- *PGA bypass* (section 10.4.1.2): PGA_L/R → LEFT_LOP/M and RIGHT_LOP/M through the line-output mixers, registers
+  81 (PGA_L → LEFT_LOP/M), 84, 88 and 91 (PGA_R → RIGHT_LOP/M), each 0 to -78 dB. It runs from LINE1 through the
+  PGA to the line outputs without the ADC, so with no conversion latency. The stock's register 41 = 0x50 (DAC_L3/R3)
+  feeds the line drivers straight from the DACs, past the mixers (section 10.3.5, Figure 10-14). To hear the PGA
+  path, the DACs must go back to DAC_L1/R1 (41 = 0) and into the same mixers (82 = 92 = 0x80, which the dormant
+  `0xC161D758` writes). Then DAC and input are mixed in analog at the line output. The board's input stages (GP7[14],
+  GP7[15], GP5[11], GP1[3]) sit before the codec and stay in the path. The ADC keeps running, so recording is
+  unaffected.
+- *Passive bypass* (section 10.4.1.3, register 108): analog switches connect LINE1LP/M or LINE2LP/M straight to
+  LEFT_LOP/M (and the right side likewise), with no gain stage and meant for power-down. LINE1 → LOP (108 = 0x33) uses
+  only wired pins.
+- *LINE2 bypass* (registers 40 D5:D2, then 80, 83, 87, 90): only if LINE2 is wired, which nothing shows.
+- *The dormant HPLCOM/HPRCOM functions* (54, 58, 71; table above) route DAC_L1/R1 to the high-power drivers. They are
+  StarterWare-derived output code that ELZ_1 play uses for its board; none routes an input, and none reaches an
+  output this board is known to use.
+Whether either route sounds right on this board (levels, the line driver's common mode, clicks when switching) is
+for a listening session ([UNKNOWNS.md](../UNKNOWNS.md), "Audio hardware").
+
+**AGC and the DAC filters are never enabled** (static, 2026-11-24; HW-71). `codec_write` has 86 call sites in each of
+SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84, with the same register arguments in all three. None writes the
+AGC registers 26-33. Register 12 is written once, 0x50: ADC high-pass on, D3-D0 = 0, so the DAC digital effects
+filters and de-emphasis stay bypassed (SLAS509G Table 10-20), and their coefficient pages are never loaded. The few
+call sites whose register argument is computed are the dormant output functions and the routing
+read-modify-writes, all run in `codec_map.py`.
+
+**Sample rate** (static, 2026-11-24; HW-72):
+- Always 48 kHz. `codec_set_sample_rate` (SmplTrek `0xC161D560`, Lofi-12 XT `0xC2C5B8C0`, CyDrums `0xC25766A0`)
+  compares its rate with 44,100 (`0xAC44`): 44,100 selects J = 7, D = 3500 and register 7 = 0x8A; anything else
+  selects 48 kHz. Its only caller in each image passes the constant 48,000 (`0xC1621340`, `0xC2C61D60`,
+  `0xC257A4E0`). ELZ_1 play 3.1.149 has the same function (`0xC27EE980`; its 44,100 at `0xC27EE994`/`0xC27EE998` is
+  this compare) and also calls it once with 48,000 (`0xC27D1854`). No image sets dual rate (register 7 D6/D5).
+- MCLK: 24.576 MHz from a source of its own on the board, inferred from the PLL arithmetic above; its origin is not
+  visible to code. AHCLKX0 is muxed as a McASP input but McASP never uses it.
+- 96 kHz is a codec-only change on paper: register 7 = 0x6A (0x0A plus ADC and DAC dual rate, which must match,
+  Table 10-15) keeps fs(ref) at 48 kHz and runs both converters at 96 kHz (section 10.3.3.2). The codec stays clock
+  master, so McASP (external clocks) follows. BCLK doubles to 6.144 MHz (2 x 32 bits x 96 kHz), and the EDMA ring and
+  blocks fill twice as fast. Nothing on the board is known to prevent it. Things an app would change with it: the ADC
+  high-pass coefficients (designed for 48 kHz, so the corner doubles), the PLL trim (its arithmetic assumes 48 kHz),
+  the DSP time per block and the USB audio rate (48 kHz only). The board's analog filtering after the codec, if any,
+  is unknown.
+
 **What stays unknown** (needs a schematic or a listening session, `experiments/sessions/D3-audio-pins-plan.md`, not
 run): the electrical roles of GP4[10], GP4[12..15], GP4[13], GP1[2], GP1[3] (code: the line PAD) and GP7[14] (the
 readings above are inference); the physical I2S channel order on the receive side and on the line outputs (the
@@ -1033,6 +1102,35 @@ general, Type I 2 x 16-bit 48 kHz, EP `0x01`, AS endpoint); IF2 the same with EP
 total 22; one embedded IN jack 1 and one embedded OUT jack 2 fed by jack 1, no external jacks; EP `0x03` bound to
 jack 1, EP `0x83` to jack 2). No interface association descriptor, no feedback endpoint. Card-reader mode uses a
 second, one-interface configuration: mass storage, bulk-only, endpoints `0x81` and `0x02`, 64 bytes.
+
+### USB host (static, 2026-11-24; HW-69)
+
+Could USB0 run as a host, for a USB MIDI keyboard on the unit's port? What the images and documents settle:
+- **The images are device-only.** usblib's OTG and host driver functions are linked in, but nothing calls them in
+  SmplTrek 3.2.174, Lofi-12 XT 1.5.205 or CyDrums 1.1.84. That covers `USBOTGSessionRequest` (`0xC15E1FC8` /
+  `0xC2C21C28` / `0xC2545028`, which sets or clears DEVCTL SESSION at USB0 + `0x460`) and `USBHostHubAddrGet`,
+  `USBHostEndpointStatusClear`, `USBHostEndpointDataToggle` and `USBHostEndpointDataAck`. The check searched the
+  listings for calls and branches, MVK/MVKH address pairs and stored pointers; the same search finds the known callers of
+  `USBReset` and `usb_dcd_init`. No host-mode path is reachable.
+- **ID decides the role, by hardware.** Bring-up leaves CFGCHIP2 USB0OTGMODE at 0, "no override", so the PHY's own
+  ID comparator decides A or B device. Whether the receptacle's ID contact reaches USB0_ID (ball P16) is board wiring
+  and not visible to code. The port is "micro USB Type-B" (manual, "Specs"). A micro-B receptacle has an ID contact,
+  and OTG adapter cables ground it, so the connector neither proves nor rules out a wired ID.
+- **VBUS supply: not visible.** USB0_DRVVBUS is a dedicated ball (K18, SPRS590G Table 3-21), not a GPIO. The
+  controller drives it high itself when it is the host and in a session (SPRUH79C 33.2.5), to switch an external 5 V
+  supply. Whether anything on the board listens to it is not visible to code. The unit
+  runs from 12 V or six AA cells (manual), so a 5 V source for VBUS would be a regulator of its own; there is no
+  evidence of one, and no current can be given. The manual lists no host function and no bus power.
+- **The ELZ_1 family is no guide to this board.** The original ELZ_1's MIDI HOST MODE (docs/17-elz1.md) uses a
+  commercial USB host cable on its one port (ELZ_1 manual v1, "Connecting USB-MIDI keyboards"). Its cable message
+  ("Please Check USB Host Cable." `0xC139178A`, shown from `0xC115884C` in v7.0) depends on `0xC11B1FA0`, which
+  returns a state word (B14 + 1252) that the host stack sets once a device has attached. It is not a wiring check
+  and says nothing about how that board makes VBUS. The ELZ_1 Series V3 manual (ELZ_1 play) lists a separate USB
+  Type-A host port with "500 mA Bus Power" beside its Type-C device port. Both are different boards from this one
+  (docs/14-other-products.md).
+
+So host mode needs three things the images can't show: a wired ID (or OTGMODE forced to host), 5 V on VBUS, and
+Enaga's own host stack. The device check for the first two is under "USB" in [UNKNOWNS.md](../UNKNOWNS.md).
 
 ## SD card (MMCSD0, `0x01C40000`)
 
