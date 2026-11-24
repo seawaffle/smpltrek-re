@@ -649,6 +649,35 @@ class UsbHost(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "endpoints 1 to 4"):
                 cpu.usb_in(0x85, 8, wait=False)
 
+    def test_double_buffered_bulk_in_interrupts_only_when_txpktrdy_clears(self):
+        # SPRUH79C 33.2.7.1.2.1.2: the interrupt comes when TXPKTRDY goes from 1 to 0. Double-buffered, a
+        # load with the other half free clears it at once; a packet that leaves with TXPKTRDY already 0
+        # only drops FIFONOTEMPTY (on the unit, a driver waiting for that interrupt stalled; session 6).
+        TX2 = 1 << 2
+        with self.plugged() as cpu:
+            self.configure(cpu, 2, tx=(0x13, 16, 64))                     # double packet buffering: 2 x 64 bytes
+            self.load(cpu, 2, bytes(64), (4,) * 16)
+            self.put(cpu, BASE + 0x522, 1, 1)
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0x02)       # TXPKTRDY cleared at once, FIFONOTEMPTY
+            self.assertEqual(self.acknowledge(cpu) & TX2, TX2)
+            result = self.finished(cpu, cpu.usb_in(0x82, 64, wait=False))
+            self.assertEqual((result["status"], len(result["data"])), ("ok", 64))
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0)          # the FIFO is empty: no interrupt
+            self.assertEqual(self.get(cpu, BASE + 0x20) & TX2, 0)
+
+            for fill in (1, 2):                                           # both halves: TXPKTRDY stays 1
+                self.load(cpu, 2, bytes([fill]) * 64, (4,) * 16)
+                self.put(cpu, BASE + 0x522, 1, 1)
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0x03)
+            self.acknowledge(cpu)
+            transfer = cpu.usb_in(0x82, 64, wait=False)
+            self.finished(cpu, transfer)
+            self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0x02)       # one left: TXPKTRDY cleared, interrupt
+            self.assertEqual(self.acknowledge(cpu) & TX2, TX2)
+            result = self.finished(cpu, cpu.usb_in(0x82, 64, wait=False))
+            self.assertEqual(result["data"], bytes([2]) * 64)
+            self.assertEqual(self.get(cpu, BASE + 0x20) & TX2, 0)        # the last one leaves without one
+
     def test_uint_selects_wrapper_or_core_interrupt_registers(self):
         # UINT = 0: the wrapper takes each event that is enabled in the core.
         with self.plugged() as cpu:
@@ -854,7 +883,9 @@ class UsbHost(unittest.TestCase):
             self.put(cpu, BASE + 0x523, 0x60, 1)
             self.assertEqual((cpu.usb_iso_state(0x82)["errors"], cpu.usb_state()["iso_errors"]), (3, 3))
 
-    def test_isoupdate_holds_a_packet_until_the_next_sof_and_double_buffering_sends_one_a_frame(self):
+    def test_isoupdate_holds_a_packet_until_the_next_sof_and_two_loaded_packets_babble(self):
+        # Two packets pending at an IN token: on the unit (session 6) the host saw babble and the FIFO emptied
+        # twice as fast as one packet a frame, so both leave in one data packet and the stream records an error.
         def first_frames(power):
             with self.plugged(sof=True) as cpu:
                 self.audio(cpu, tx=(0x15, 72, 196))                       # two packets
@@ -866,10 +897,42 @@ class UsbHost(unittest.TestCase):
                     self.put(cpu, BASE + 0x522, 0x01, 1)
                 self.assertEqual(self.get(cpu, BASE + 0x522, 1), 0x03)    # both halves loaded
                 cpu.run(3 * FRAME)
-                return [row["data"][:1] for row in cpu.usb_iso_collect(0x82)], cpu.usb_state()["iso_underruns"]
-        self.assertEqual(first_frames(0x40), ([b"\x01", b"\x02", b""], 1))
+                state = cpu.usb_state()
+                rows = [(row["status"], row["data"][:1]) for row in cpu.usb_iso_collect(0x82)]
+                return rows, state["iso_underruns"], state["iso_double_sends"]
+        self.assertEqual(first_frames(0x40), ([("error", b""), ("empty", b""), ("empty", b"")], 1, 1))
         # ISOUPDATE: neither goes out in the frame it was loaded in, and that zero-length packet is no underrun.
-        self.assertEqual(first_frames(0xc0), ([b"", b"\x01", b"\x02"], 0))
+        self.assertEqual(first_frames(0xc0), ([("empty", b""), ("error", b""), ("empty", b"")], 1, 1))
+
+    def test_double_buffered_iso_in_sends_one_packet_a_frame_when_loaded_one_a_frame(self):
+        with self.plugged(sof=True) as cpu:
+            self.audio(cpu, tx=(0x15, 72, 196))                           # two packets
+            cpu.usb_iso_stream_in(0x82, 4, wait=False)
+            for fill in range(1, 5):
+                cpu.run(FRAME // 2)                                       # after this frame's token
+                self.load(cpu, 2, bytes([fill]) * 8, (4, 4))
+                self.put(cpu, BASE + 0x522, 0x01, 1)
+                cpu.run(FRAME - FRAME // 2)
+            rows = [(row["status"], row["data"][:1]) for row in cpu.usb_iso_collect(0x82)]
+            self.assertEqual(rows[:3], [("data", b"\x01"), ("data", b"\x02"), ("data", b"\x03")])
+            self.assertEqual(cpu.usb_state()["iso_double_sends"], 0)
+
+    def test_isoupdate_loading_at_each_sof_before_the_token_sends_one_packet_a_frame(self):
+        # Enaga's feeding since session 6: one packet at each SOF, held by ISOUPDATE. When the load comes before
+        # the token, last frame's packet (released at this SOF) goes and the new one stays: no babble.
+        with self.plugged(sof=True) as cpu:
+            self.audio(cpu, tx=(0x15, 72, 196))                           # two packets
+            self.put(cpu, BASE + 0x401, 0xc0, 1)
+            cpu.usb_iso_stream_in(0x82, 4, wait=False)
+            cpu.run(FRAME + 1)                                            # just after the SOF, before the IN token
+            for fill in range(1, 5):
+                self.load(cpu, 2, bytes([fill]) * 8, (4, 4))
+                self.put(cpu, BASE + 0x522, 0x01, 1)
+                cpu.run(FRAME)
+            rows = [(row["status"], row["data"][:1]) for row in cpu.usb_iso_collect(0x82)]
+            self.assertEqual(rows, [("empty", b""), ("data", b"\x01"), ("data", b"\x02"), ("data", b"\x03")])
+            state = cpu.usb_state()
+            self.assertEqual((state["iso_double_sends"], state["iso_underruns"]), (0, 0))
 
     def test_streams_run_beside_a_bulk_transfer_and_fast_forward_changes_nothing(self):
         def script(fast_forward):
