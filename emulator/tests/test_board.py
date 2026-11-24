@@ -56,6 +56,39 @@ class Board(unittest.TestCase):
             self.put(cpu, 0x01800044, 1 << 4)
             self.assertEqual(self.get(cpu, 0x01800004), 0)
 
+    def test_mmio_capture_keeps_whole_sequences_folds_polls_and_filters(self):
+        program = ["stw .D1T1 a5,*a4", "ldw .D1T1 *a4,a6", "nop 4", "ldw .D1T1 *a4,a6", "nop 4", "ldw .D1T1 *a4,a6",
+                   "nop 4", "stw .D1T1 a5,*a7", "stw .D1T1 a8,*a4", "ldw .D1T1 *a4,a6", "nop 4"]
+        with self.machine(program) as cpu:
+            self.configure_i2c(cpu, pins=False)
+            cpu.capture_start([(0x01c22000, 0x01c22004)])                # ICOAR only: the ICSAR store is outside
+            for register, value in (("a4", 0x01c22000), ("a5", 0x55), ("a7", 0x01c2201c), ("a8", 0x66)):
+                cpu.set_register(register, value)
+            self.assertEqual(cpu.run(200)["status"], "returned")
+            rows = cpu.capture_take(stop=True)
+            self.assertEqual([(row["write"], row["value"], row["repeat"], row["pc"]) for row in rows],
+                             [(True, 0x55, 1, 0x1000), (False, 0x55, 1, 0x1004), (False, 0x55, 1, 0x100c),
+                              (False, 0x55, 1, 0x1014), (True, 0x66, 1, 0x1020), (False, 0x66, 1, 0x1024)])
+            self.assertEqual(cpu.capture_take(), [])
+        with self.machine(["stw .D1T1 a5,*a4", "ldw .D1T1 *a4,a6", "nop 4", "b .S1 00001004", "nop 5"]) as cpu:
+            self.configure_i2c(cpu, pins=False)
+            cpu.capture_start([(0x01c22000, 0x01c22004)])
+            cpu.set_register("a4", 0x01c22000); cpu.set_register("a5", 0x22)
+            cpu.run(5000)                                                # a poll: the same PC reading the same value
+            rows = cpu.capture_take(stop=True)
+            self.assertEqual(len(rows), 2)
+            self.assertGreater(rows[1]["repeat"], 100)
+            cpu.capture_start([(0x01c22000, 0x01c22004)], writes_only=True)
+            cpu.run(1000)
+            self.assertEqual(cpu.capture_take(stop=True), [])            # reads only: nothing kept
+        with self.machine(["stw .D1T1 a5,*a4", "b .S1 00001000", "nop 5"]) as cpu:
+            self.configure_i2c(cpu, pins=False)
+            cpu.capture_start([(0x01c22000, 0x01c22004)], limit=4)       # a store every loop, never taken
+            cpu.set_register("a4", 0x01c22000); cpu.set_register("a5", 0x22)
+            cpu.run(1000)
+            with self.assertRaisesRegex(RuntimeError, "dropped"):
+                cpu.capture_take(stop=True)
+
     def test_stores_to_the_empty_emifa_chip_select_are_dropped_and_counted(self):
         # M1 bench I6 on the unit: three STW of 0 at 0x4630314e (so 0x4630314c), +4 and +8 completed with no
         # stall, exception or event flag. What a read returns there was not consistent, so reads still stop.
@@ -361,6 +394,13 @@ class Board(unittest.TestCase):
             self.assertEqual(self.sd_command(cpu, base, 3) >> 16, 1)
             self.assertTrue(times_out(cpu, base, 55, 0))                  # stand-by: the published RCA only
             self.assertTrue(self.sd_command(cpu, base, 55, 0x10000) & 32)
+            log, following = cpu.sd_log()
+            self.assertEqual(following, len(log))
+            cmd55 = [(row["argument"], row["answered"]) for row in log if row["command"] == "CMD55"]
+            self.assertIn((0, False), cmd55)
+            self.assertIn((0x10000, True), cmd55)
+            self.assertEqual(log[-1]["sequence"], len(log) - 1)
+            self.assertEqual(cpu.sd_log(following), ([], following))
 
     def test_sd_dma_short_scr_flush_and_sector_write_match_across_slices(self):
         snapshots = []
@@ -566,6 +606,9 @@ class Board(unittest.TestCase):
             cpu.run(100000)  # receive buffer holds the first byte; clock stretches until read
             self.assertEqual(cpu.codec_state()["bytes_received"], 1)
             self.assertEqual(cpu.read(base + 0x18, 1), b"\x10")
+            log, _ = cpu.codec_log()
+            self.assertEqual([(row["page"], row["register"], row["value"], row["read"]) for row in log], [(0, 3, 0x10, True)])
+            self.assertEqual(cpu.codec_state()["trace"], [])             # the write trace leaves reads out
             self.assertFalse(self.get(cpu, base + 8) & 8)
             cpu.run(33480 + 3720)
             self.assertEqual(self.get(cpu, base + 0x18), 4)

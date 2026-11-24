@@ -24,7 +24,7 @@ void SdCard::load(const uint8_t *data, uint32_t size) {
     if (!data || size < 2 * 1024 * 1024 || size > 1024 * 1024 * 1024 || !std::has_single_bit(size))
         throw std::runtime_error("SDSC backing must be a power-of-two size from 2 MiB to 1 GiB");
     image.assign(data, data + size); state = 0; width = 1; app = false;
-    bytes_read = bytes_written = 0; trace.clear();
+    bytes_read = bytes_written = 0; trace.clear(); logged = 0;
     cid = {0x0101ab00, 0x31100000, 0x534d504c, 0x45454d53}; crc(cid);
     csd = {};
     field(csd, 112, 8, 0x0e); field(csd, 96, 8, 0x32); // TAAC, 25 MHz transfer speed
@@ -113,8 +113,9 @@ SdReply SdCard::command(uint32_t index, uint32_t argument, uint64_t cycle) {
         app = true; out.words[0] |= 32; break;
     default: throw std::runtime_error("unsupported SD command " + std::to_string(index));
     }
-    trace.push_back({cycle, index + (application && index != 55 ? 64u : 0u), argument, out.words[0], state});
-    if (trace.size() > 128) trace.pop_front();
+    trace.push_back({cycle, index + (application && index != 55 ? 64u : 0u), argument, out.words[0], state,
+                     uint32_t(out.responds), uint32_t(out.long_response)}); logged++;
+    if (trace.size() > TRACE) trace.pop_front();
     return out;
 }
 void SdCard::prepare_blocks(SdReply &reply, uint32_t count) {

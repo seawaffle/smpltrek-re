@@ -30,7 +30,7 @@ void Codec::reset_registers() {
     constexpr uint8_t hpf[] = {0x39, 0x55, 0xf3, 0x2d, 0x53, 0x7e};
     for (unsigned i = 0; i < 12; i++) regs[1][65 + i] = hpf[i % 6];
 }
-void Codec::reset() { reset_registers(); writes = resets = 0; trace.clear(); expect_pointer = true; }
+void Codec::reset() { reset_registers(); writes = resets = logged = 0; trace.clear(); expect_pointer = true; }
 bool Codec::send(uint8_t value, uint64_t cycle) {
     if (expect_pointer) {
         if (value >= 128) throw std::runtime_error("codec register address exceeds 127");
@@ -44,8 +44,8 @@ bool Codec::send(uint8_t value, uint64_t cycle) {
     } else if (page == 0 && pointer == 1 && (value & 0x80)) { reset_registers(); resets++; }
     else regs[page][pointer] = (regs[page][pointer] & ~writable) | (value & writable);
     writes++;
-    trace.push_back({cycle, old_page, old_pointer, value});
-    if (trace.size() > 256) trace.pop_front();
+    trace.push_back({cycle, old_page, old_pointer, value, 0}); logged++;
+    if (trace.size() > TRACE) trace.pop_front();
     pointer = uint8_t((old_pointer + 1) & 127);
     return true;
 }
@@ -54,6 +54,9 @@ uint8_t Codec::inspect(unsigned bank, unsigned reg) const {
     (void)mask(bank, reg);
     return reg == 0 ? page : regs[bank][reg];
 }
-uint8_t Codec::receive() {
-    uint8_t value = inspect(page, pointer); pointer = uint8_t((pointer + 1) & 127); return value;
+uint8_t Codec::receive(uint64_t cycle) {
+    uint8_t value = inspect(page, pointer);
+    trace.push_back({cycle, page, pointer, value, 1}); logged++;
+    if (trace.size() > TRACE) trace.pop_front();
+    pointer = uint8_t((pointer + 1) & 127); return value;
 }
