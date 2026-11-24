@@ -11,7 +11,7 @@ struct SdReply {
     std::vector<uint8_t> data;
     uint32_t address = 0;
 };
-struct SdCommand { uint64_t cycle; uint32_t command, argument, response, state; };
+struct SdCommand { uint64_t cycle; uint32_t command, argument, response, state, responds, long_response; };
 // An explicitly limited SD 2.0 standard-capacity card. Native SD mode, byte addressing.
 class SdCard {
     bool app = false;
@@ -21,7 +21,9 @@ public:
     std::vector<uint8_t> image;
     uint32_t state = 0, width = 1;
     uint64_t commands = 0, bytes_read = 0, bytes_written = 0;
-    std::deque<SdCommand> trace;
+    static constexpr size_t TRACE = 65536;
+    std::deque<SdCommand> trace;     // the latest TRACE commands, oldest first
+    uint64_t logged = 0;             // commands ever added to trace
     void load(const uint8_t *data, uint32_t size);
     SdReply command(uint32_t index, uint32_t argument, uint64_t cycle);
     void prepare_blocks(SdReply &reply, uint32_t count);

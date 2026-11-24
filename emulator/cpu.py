@@ -122,6 +122,11 @@ class CPU:
             "sd_command": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64), C.POINTER(C.c_uint32)]),
             "mmio_count": (C.c_uint64, [C.c_void_p]),
             "mmio_access": (C.c_int, [C.c_void_p, C.c_uint64, C.POINTER(C.c_uint64), C.POINTER(C.c_uint32)]),
+            "capture_start": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint32), C.c_uint32, C.c_uint32, C.c_uint64]),
+            "capture_stop": (C.c_int, [C.c_void_p]),
+            "capture_take": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint64), C.c_uint32, C.POINTER(C.c_uint64)]),
+            "codec_log": (C.c_int, [C.c_void_p, C.c_uint64, C.POINTER(C.c_uint64), C.c_uint32, C.POINTER(C.c_uint64)]),
+            "sd_log": (C.c_int, [C.c_void_p, C.c_uint64, C.POINTER(C.c_uint64), C.c_uint32, C.POINTER(C.c_uint64)]),
             "packet_info": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint32), C.POINTER(Instruction)]),
         }
         for name, (result, args) in signatures.items():
@@ -173,10 +178,19 @@ class CPU:
         }
         result["trace"] = []
         for index in range(result.pop("trace_length")):
-            cycle, row = C.c_uint64(), (C.c_uint32 * 3)()
+            cycle, row = C.c_uint64(), (C.c_uint32 * 4)()
             self.checked(self.lib.c6_codec_write(self.handle, index, C.byref(cycle), row))
-            result["trace"].append(dict(cycles=cycle.value, page=row[0], register=row[1], value=row[2]))
+            if not row[3]:   # writes only; codec_log() has the reads too
+                result["trace"].append(dict(cycles=cycle.value, page=row[0], register=row[1], value=row[2]))
         return result
+
+    def codec_log(self, since=0):
+        """The codec's I2C register writes and reads in order from sequence number `since` on (the model keeps
+        the latest 65536): returns (rows, next_since). Each row: sequence, cycles, page, register, value, read.
+        Raises if rows from `since` on were already dropped. A software reset (page 0 register 1 bit 7) is
+        logged as the write it is."""
+        return self._log(self.lib.c6_codec_log, since, 5, lambda n, r: dict(
+            sequence=n, cycles=r[0], page=r[1], register=r[2], value=r[3], read=bool(r[4])), "codec")
 
     def audio_output(self):
         self.ensure_open()
@@ -790,6 +804,29 @@ class CPU:
             result["trace"].append(dict(cycles=cycle.value, command=row[0], argument=row[1], response=row[2], state=row[3]))
         return result
 
+    def sd_log(self, since=0):
+        """SD commands in order from sequence number `since` on (the card keeps the latest 65536): returns
+        (rows, next_since). Each row: sequence, cycles, command (ACMDs as "ACMD41"), index, argument, response
+        (the first response word; for R2 its bits 31:0), state (the card state after it), answered, long."""
+        def row(n, r):
+            index = r[1] - 64 if r[1] >= 64 else r[1]
+            return dict(sequence=n, cycles=r[0], command=("ACMD" if r[1] >= 64 else "CMD") + str(index), index=index,
+                        argument=r[2], response=r[3], state=r[4], answered=bool(r[5]), long=bool(r[6]))
+        return self._log(self.lib.c6_sd_log, since, 7, row, "SD command")
+
+    def _log(self, function, since, width, make, name):
+        self.ensure_open()
+        rows, fields = (C.c_uint64 * (width * 4096))(), (C.c_uint64 * 4)()
+        found = []
+        while True:
+            self.checked(function(self.handle, since, rows, 4096, fields))
+            if fields[2] > since:
+                raise RuntimeError(f"{name} log rows {since}..{fields[2] - 1} were dropped before they were read")
+            found += [make(since + i, rows[width * i:width * i + width]) for i in range(fields[0])]
+            since = fields[1]
+            if fields[0] < 4096:
+                return found, since
+
     def sd_read(self, offset=0, size=None):
         self.ensure_open()
         self.address(offset)
@@ -975,6 +1012,36 @@ class CPU:
             result.append({"sequence": sequence, "cycles": cycle.value, "pc": fields[0], "address": fields[1],
                            "value": fields[2], "size": fields[3], "write": bool(fields[4])})
         return result
+
+    def capture_start(self, ranges, writes_only=False, limit=1 << 22):
+        """Capture every MMIO access to the given address ranges, [(start, end), ...] with end exclusive, for
+        whole sequences (mmio_trace keeps only the latest 1024 of all accesses). Reads are captured too unless
+        `writes_only`; identical consecutive reads (a poll) fold into one row with a `repeat` count. Take the
+        rows with capture_take() as often as needed: nothing is lost unless `limit` rows wait untaken, and
+        capture_take() reports any that were. Starting again clears the previous capture."""
+        self.ensure_open()
+        flat = [value for start, end in ranges for value in (start, end)]
+        if not ranges or len(ranges) > 64:
+            raise ValueError("give 1 to 64 address ranges")
+        self.checked(self.lib.c6_capture_start(self.handle, (C.c_uint32 * len(flat))(*flat), len(ranges),
+                                               int(bool(writes_only)), limit))
+
+    def capture_take(self, stop=False):
+        """The captured rows so far, oldest first: cycles, pc (0xfffffff0 for DMA), address, value, size, write,
+        repeat. With `stop`, ends the capture first so the last row is included. Raises if rows were dropped."""
+        self.ensure_open()
+        if stop:
+            self.checked(self.lib.c6_capture_stop(self.handle))
+        rows, fields, found = (C.c_uint64 * (7 * 4096))(), (C.c_uint64 * 4)(), []
+        while True:
+            self.checked(self.lib.c6_capture_take(self.handle, rows, 4096, fields))
+            for i in range(fields[0]):
+                r = rows[7 * i:7 * i + 7]
+                found.append(dict(cycles=r[0], pc=r[1], address=r[2], value=r[3], size=r[4], write=bool(r[5]), repeat=r[6]))
+            if fields[3]:
+                raise RuntimeError(f"the MMIO capture dropped {fields[3]} rows: take them more often or raise the limit")
+            if fields[0] < 4096:
+                return found
 
     def packet_info(self, address):
         self.ensure_open()

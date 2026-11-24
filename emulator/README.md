@@ -1237,6 +1237,56 @@ both ways (emulation only, like the rest):
 These agree with the static findings HW-12, HW-18 and HW-40; they do not raise any of them to
 `observed-device`.
 
+## Register capture (2026-11-24)
+
+For comparing a firmware's drivers with the stock's, write by write. The calls (`cpu.py`):
+
+| Call | Returns |
+|---|---|
+| `capture_start(ranges, writes_only=False, limit=1 << 22)` | Captures every guest MMIO access to the address ranges `[(start, end), ...]` (end exclusive, 1 to 64 ranges). Reads are kept unless `writes_only`. Identical reads in a row (same PC, address, size and value: a poll) fold into one row with a `repeat` count. Starting again clears the earlier capture. |
+| `capture_take(stop=False)` | The rows so far, oldest first: `cycles`, `pc` (0xFFFFFFF0 for an EDMA transfer), `address`, `value`, `size`, `write`, `repeat`. Taken rows are removed, so a long run can be drained in pieces with nothing lost. At most `limit` rows wait; past that, new rows are dropped and the call raises. While the capture is on, a trailing read row is held back, because it may still fold more reads; `stop=True` ends the capture and returns it. |
+| `codec_log(since=0)` | `(rows, next_since)`: the codec's I2C register writes and reads in order (`sequence`, `cycles`, `page`, `register`, `value`, `read`). The model keeps the latest 65,536 rows, and the call raises if rows from `since` on were already dropped. `codec_state()["trace"]` still lists the writes only. |
+| `sd_log(since=0)` | `(rows, next_since)`: the SD card's commands in order (`sequence`, `cycles`, `command` such as "CMD55" or "ACMD41", `index`, `argument`, `response` (the first response word), `state` (the card state after it), `answered`, `long`). The latest 65,536 are kept. `sd_state()["trace"]` keeps its latest 128. |
+
+Host-side `cpu.read` and `cpu.write` are not captured: only the guest's own accesses (and EDMA's) are.
+
+`mmio_trace()` is unchanged: it holds the latest 1,024 accesses of every kind.
+
+`stock_register_capture.py --conditional` runs the stock 3.2.174 through the phases in its docstring:
+- boot;
+- the cable attached, bus reset and enumeration;
+- the first bulk OUT and IN transfers;
+- SET_INTERFACE on and off;
+- suspend and resume, then detach;
+- REC SRC through each input group;
+- power-off;
+- in a second run, card-reader mode as far as the emulator goes.
+
+It writes `work/register-capture/raw.json`. `stock_register_tables.py` turns that into
+[docs/stock-register-writes/](../docs/stock-register-writes/README.md). Register names, widths, reset values and
+fields come from `register_map.json`, which `register_map_build.py` rebuilds from SPRUH79C and SLAS509G.
+
+**Reset values against SPRUH79C** (`register_reset_audit.py`; a fresh board, each register read at its own width,
+only the bits the TRM gives compared). 395 registers match and 199 cannot be read in the model; those are mostly
+CPPI DMA and queue-manager words and a few write-only or FIFO registers.
+
+These differ, all on registers the stock writes before relying on them:
+
+| Register | TRM reset | Emulator | Note |
+|---|---|---|---|
+| SYSCFG0 KICK0R / KICK1R | 0 | the unlock keys | the model starts unlocked, as after the bootloader (stock app start) |
+| SYSCFG0 SUSPSRC | 0xFFFFFFFF | 0 | not modelled |
+| SYSCFG0 CFGCHIP2 | 0xEF00: PHY and OTG powered down, USB0OTGMODE 3 ("force host operation with VBUS low") | 0 | the stock writes 0x0972 whole; what the bootloader leaves is not known |
+| I2C0 ICSAR | 0x3FF | 0 | the stock writes 0x18 |
+| MMCSD0 MMCST1 | 0x2 (CLKSTP) | 0x26 (also DXEMP, FIFOEMP) | status bits |
+| McASP0 ACLKRCTL, ACLKXCTL | 0x20, 0x60 | 0 | the stock writes both |
+| McASP0 AHCLKRCTL, AHCLKXCTL | 0x8000 | 0 | the stock writes both |
+| USB0 INTRTXE, INTRRXE, INTRUSBE | 0x1F, 0x1E, 0x06 | 0x01, 0, 0 | known: see "Which interrupt registers to read" |
+
+POWER's reset (0x20, HSENAB set) was taken from the unit (session 6) and matches the TRM. Forty-two more
+mismatches are on registers the stock never touches: run the script for the full list. None of the above is
+changed in the model yet.
+
 ## Backlog
 
 - **Panel MCU stream cost and detail.** The stream above costs about 40% of speed. What is left

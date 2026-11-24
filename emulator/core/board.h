@@ -20,6 +20,11 @@ struct BoardAccess {
     uint64_t cycle;
     uint32_t pc, address, value, size, write;
 };
+// One row of an MMIO capture: a write, or a read (`repeat` counts identical reads folded into it: a poll).
+struct CaptureRow {
+    uint64_t cycle;
+    uint32_t pc, address, value, size, write, repeat;
+};
 struct ReservedWrite {
     uint64_t cycle, value;
     uint32_t pc, address, size;
@@ -69,6 +74,14 @@ public:
     bool reserved_write(uint32_t address, const uint8_t *data, uint32_t size, uint64_t cycle, uint32_t pc, bool guest);
     bool enabled = false;
     uint64_t accesses = 0;
+    // Whole-sequence capture of chosen address ranges, drained by the host (c6_capture_take) so nothing is
+    // lost while the drain keeps up; past `limit` rows waiting, new rows are counted in `dropped`.
+    struct Capture {
+        bool on = false, writes_only = false;
+        std::vector<std::pair<uint32_t, uint32_t>> ranges; // [start, end)
+        std::deque<CaptureRow> rows;
+        uint64_t recorded = 0, dropped = 0, limit = 0;
+    } capture;
     uint32_t pending_interrupts = 0;
     void enable(bool gpio_handoff = false);
     void advance(uint64_t cycle);

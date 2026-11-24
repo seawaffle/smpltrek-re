@@ -252,8 +252,12 @@ int c6_nor_stats(void *machine, uint32_t chip, uint64_t *fields);
 /* fields[9]: starts, stops, TX bytes, RX bytes, NACKs, codec writes/resets/page/trace length. */
 int c6_i2c_stats(void *machine, uint64_t *fields);
 int c6_codec_register(void *machine, uint32_t page, uint32_t reg, uint32_t *value);
-/* Oldest-first bounded trace; fields[3] = page, register, original written value. */
+/* Oldest-first bounded trace (the latest 65536 rows); fields[4] = page, register, value, 1 for a read. */
 int c6_codec_write(void *machine, uint32_t index, uint64_t *cycle, uint32_t *fields);
+/* The codec's writes and reads from sequence number `since` on, oldest first: rows[5 per row] = cycle, page,
+   register, value, 1 for a read. fields[4]: rows returned, the next sequence to ask for, the oldest sequence
+   still held, rows ever logged. A gap between `since` and the oldest held means rows were lost. */
+int c6_codec_log(void *machine, uint64_t since, uint64_t *rows, uint32_t capacity, uint64_t *fields);
 /* fields[8]: TX/RX words, underruns, overruns, capture words, first cycle/slot, last cycle. */
 int c6_audio_stats(void *machine, uint64_t *fields);
 int c6_audio_copy(void *machine, uint32_t offset, uint32_t *words, uint32_t count);
@@ -268,8 +272,22 @@ int c6_sd_read(void *machine, uint32_t offset, uint8_t *data, uint32_t size);
 int c6_sd_stats(void *machine, uint64_t *fields);
 /* fields[4]: command (ACMD = 64 + index), argument, first response word, resulting card state. */
 int c6_sd_command(void *machine, uint32_t index, uint64_t *cycle, uint32_t *fields);
+/* SD commands from sequence `since` on (the card keeps the latest 65536): rows[7 per row] = cycle, command
+   (ACMD = 64 + index), argument, first response word (R2: bits 31:0), resulting card state, answered,
+   long response. fields[4] as c6_codec_log. */
+int c6_sd_log(void *machine, uint64_t since, uint64_t *rows, uint32_t capacity, uint64_t *fields);
 uint64_t c6_mmio_count(void *machine);
 int c6_mmio_access(void *machine, uint64_t sequence, uint64_t *cycle, uint32_t *fields);
+/* Whole-sequence MMIO capture. Start clears any earlier capture: `ranges` holds `count` (1..64) pairs
+   [start, end); with `writes_only` reads are skipped, otherwise identical consecutive reads (same PC,
+   address, size and value: a poll) fold into one row with a repeat count. At most `limit` rows wait to
+   be taken; further rows are counted as dropped. DMA accesses carry PC 0xfffffff0. */
+int c6_capture_start(void *machine, const uint32_t *ranges, uint32_t count, uint32_t writes_only, uint64_t limit);
+int c6_capture_stop(void *machine);
+/* Takes up to `capacity` rows, oldest first: rows[7 per row] = cycle, PC, address, value, size, 1 for a
+   write, repeat count. fields[4]: rows taken, rows still waiting, rows recorded, rows dropped. While the
+   capture is on, a trailing read row is held back (it may still fold more reads). */
+int c6_capture_take(void *machine, uint64_t *rows, uint32_t capacity, uint64_t *fields);
 int c6_packet_info(void *machine, uint32_t pc, uint32_t *fields, c6_instruction *instructions);
 
 #ifdef __cplusplus

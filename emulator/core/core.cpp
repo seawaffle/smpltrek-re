@@ -3148,7 +3148,7 @@ int c6_codec_write(void *handle, uint32_t index, uint64_t *cycle, uint32_t *fiel
         auto &trace = m->board.codec.trace;
         if (!m->board.enabled || index >= trace.size()) throw std::runtime_error("invalid codec trace index");
         auto &w = trace[index]; *cycle = w.cycle;
-        fields[0] = w.page; fields[1] = w.reg; fields[2] = w.value;
+        fields[0] = w.page; fields[1] = w.reg; fields[2] = w.value; fields[3] = w.read;
     });
 }
 int c6_audio_stats(void *handle, uint64_t *fields) {
@@ -3216,6 +3216,71 @@ int c6_mmio_access(void *handle, uint64_t sequence, uint64_t *cycle, uint32_t *f
         auto access = m->board.access(sequence); *cycle = access.cycle;
         fields[0] = access.pc; fields[1] = access.address; fields[2] = access.value;
         fields[3] = access.size; fields[4] = access.write;
+    });
+}
+int c6_capture_start(void *handle, const uint32_t *ranges, uint32_t count, uint32_t writes_only, uint64_t limit) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the MMIO capture needs the board");
+        if (!count || count > 64 || !limit || limit > (uint64_t(1) << 26)) throw std::runtime_error("invalid MMIO capture ranges or limit");
+        auto &c = m->board.capture;
+        c = {};
+        for (uint32_t i = 0; i < count; i++) {
+            if (ranges[2 * i] >= ranges[2 * i + 1]) throw std::runtime_error("an MMIO capture range must be [start, end) with start < end");
+            c.ranges.emplace_back(ranges[2 * i], ranges[2 * i + 1]);
+        }
+        c.writes_only = writes_only; c.limit = limit; c.on = true;
+    });
+}
+int c6_capture_stop(void *handle) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] { m->board.capture.on = false; });
+}
+int c6_capture_take(void *handle, uint64_t *rows, uint32_t capacity, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        auto &c = m->board.capture;
+        // The newest row may still fold more poll reads into it, so it is kept back unless capture is off.
+        size_t ready = c.rows.size() - (c.on && !c.rows.empty() && !c.rows.back().write ? 1 : 0);
+        uint32_t taken = uint32_t(std::min<size_t>(capacity, ready));
+        for (uint32_t i = 0; i < taken; i++) {
+            const auto &r = c.rows.front();
+            uint64_t *row = rows + 7 * i;
+            row[0] = r.cycle; row[1] = r.pc; row[2] = r.address; row[3] = r.value; row[4] = r.size; row[5] = r.write; row[6] = r.repeat;
+            c.rows.pop_front();
+        }
+        fields[0] = taken; fields[1] = c.rows.size(); fields[2] = c.recorded; fields[3] = c.dropped;
+    });
+}
+int c6_codec_log(void *handle, uint64_t since, uint64_t *rows, uint32_t capacity, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the codec log needs the board");
+        const auto &c = m->board.codec;
+        uint64_t first = c.logged - c.trace.size(), from = std::max(since, first);
+        uint32_t count = 0;
+        for (uint64_t n = from; n < c.logged && count < capacity; n++, count++) {
+            const auto &w = c.trace[size_t(n - first)];
+            uint64_t *row = rows + 5 * count;
+            row[0] = w.cycle; row[1] = w.page; row[2] = w.reg; row[3] = w.value; row[4] = w.read;
+        }
+        fields[0] = count; fields[1] = from + count; fields[2] = first; fields[3] = c.logged;
+    });
+}
+int c6_sd_log(void *handle, uint64_t since, uint64_t *rows, uint32_t capacity, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the SD command log needs the board");
+        const auto &card = m->board.mmcsd.card;
+        uint64_t first = card.logged - card.trace.size(), from = std::max(since, first);
+        uint32_t count = 0;
+        for (uint64_t n = from; n < card.logged && count < capacity; n++, count++) {
+            const auto &r = card.trace[size_t(n - first)];
+            uint64_t *row = rows + 7 * count;
+            row[0] = r.cycle; row[1] = r.command; row[2] = r.argument; row[3] = r.response; row[4] = r.state;
+            row[5] = r.responds; row[6] = r.long_response;
+        }
+        fields[0] = count; fields[1] = from + count; fields[2] = first; fields[3] = card.logged;
     });
 }
 int c6_packet_info(void *handle, uint32_t pc, uint32_t *fields, c6_instruction *instructions) {

@@ -76,7 +76,7 @@ void Board::enable(bool gpio_handoff) {
         codec.start(read); return true;
     };
     i2c.send = [this](uint8_t byte, uint64_t cycle) { return codec.send(byte, cycle); };
-    i2c.receive = [this](uint64_t) { return codec.receive(); };
+    i2c.receive = [this](uint64_t cycle) { return codec.receive(cycle); };
     i2c.stop = [](uint64_t) {};
     mcasp.reset();
     mcasp.interrupt = [this] { event(61); };
@@ -478,6 +478,19 @@ void Board::advance(uint64_t cycle) {
 }
 void Board::record(uint32_t address, uint32_t value, uint32_t size, bool write, uint64_t cycle, uint32_t pc) {
     log[accesses++ % log.size()] = BoardAccess{cycle, pc, address, value, size, uint32_t(write)};
+    if (!capture.on || (!write && capture.writes_only)) return;
+    bool wanted = false;
+    for (auto [start, end] : capture.ranges) if (address >= start && address < end) { wanted = true; break; }
+    if (!wanted) return;
+    if (!write && !capture.rows.empty()) {
+        auto &last = capture.rows.back();
+        if (!last.write && last.pc == pc && last.address == address && last.value == value && last.size == size) {
+            last.repeat++; return;
+        }
+    }
+    if (capture.rows.size() >= capture.limit) { capture.dropped++; return; }
+    capture.rows.push_back({cycle, pc, address, value, size, uint32_t(write), 1});
+    capture.recorded++;
 }
 uint32_t Board::read_word(uint32_t address, uint64_t cycle) {
     advance(cycle);

@@ -1103,6 +1103,12 @@ total 22; one embedded IN jack 1 and one embedded OUT jack 2 fed by jack 1, no e
 jack 1, EP `0x83` to jack 2). No interface association descriptor, no feedback endpoint. Card-reader mode uses a
 second, one-interface configuration: mass storage, bulk-only, endpoints `0x81` and `0x02`, 64 bytes.
 
+**Register order, both configurations** (emulated, 2026-11-24): see [stock-register-writes/](stock-register-writes/README.md)
+for every USB0 access by phase, with field changes and reset values. Composite mode writes POWER = 0, then 0x40
+(full speed). Card-reader mode resets the controller and writes POWER = 0x20, then 0x60, so HSEN stays set and mass
+storage negotiates high speed, as the manual says. It also puts endpoint 1's TX in generic RNDIS mode
+(GENRNDISSZ1 = 0x1000) and moves the bulk data through CPPI DMA.
+
 ### USB host (static, 2026-11-24; HW-69)
 
 Could USB0 run as a host, for a USB MIDI keyboard on the unit's port? What the images and documents settle:

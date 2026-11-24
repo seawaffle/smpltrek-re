@@ -237,9 +237,9 @@ Mapped in `docs/06-audio-engine.md`, claims AUD-1..AUD-12 (2026-11-17).
   and the adapter in, B-DEVICE (bit 7) reads 0 and HOST-MODE (bit 2) 1. VBUS (bits 4:3) reaching "above VBUS valid"
   with no other supply shows DRVVBUS powers VBUS; a meter on the adapter's VBUS gives the voltage. Clear SESSION
   afterwards. D (the current limit: B)
-- Whether the stock card-reader mode runs at high speed: the manual lists mass storage as "USB2.0 High Speed",
-  audio and MIDI as Full Speed, but `usb_dcd_init` writes POWER = 0x40 (HSENAB off). The card-reader path's POWER
-  writes were not traced. S
+- Card-reader mode past its CPPI DMA start: the high-speed enumeration (it sets HSEN: POWER = 0x20 then 0x60,
+  emulated, `docs/stock-register-writes/`), the generic-RNDIS transfers and the remount on leaving the mode. The
+  emulator models no CPPI DMA. D (with a USB analyser), Sim (CPPI model)
 
 ### MIDI and SYNC
 - The MIDI receive handler bodies per product; MIDI word [2] in Lofi and CyDrums. `01-platform-map.md` "MIDI". S
