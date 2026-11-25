@@ -26,6 +26,8 @@ a SmplTrek**, with its card content and working audio (device session C5, 2026-1
 and the directions onto a Lofi-12 XT or a CyDrums are checked offline but have not run on a unit.
 Step-by-step instructions for the tool: [docs/13-palette-swap-howto.md](docs/13-palette-swap-howto.md).
 
+Your own wavetables on a CyDrums (`tools/cydrums_wavetables.py`): [docs/18-cydrums-wavetables-howto.md](docs/18-cydrums-wavetables-howto.md).
+
 ## Start here
 
 - [Overview](docs/00-overview.md): the platform in one page, and the index to the other docs.
