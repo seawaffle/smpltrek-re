@@ -1138,6 +1138,68 @@ Could USB0 run as a host, for a USB MIDI keyboard on the unit's port? What the i
 So host mode needs three things the images can't show: a wired ID (or OTGMODE forced to host), 5 V on VBUS, and
 Enaga's own host stack. The device check for the first two is under "USB" in [UNKNOWNS.md](../UNKNOWNS.md).
 
+### USB audio channel capacity (static, 2026-11-25; HW-74)
+
+How many independent audio channels could USB carry to and from a computer with new USB code? The stock carries
+2 in and 2 out, 16-bit 48 kHz, at full speed ("USB audio" above). The limits below come from the controller
+documentation and arithmetic; none is tested on a unit.
+
+**The controller** (SPRUH79C 33.1.2 and 33.4):
+- 4 transmit and 4 receive endpoints besides endpoint 0, each able to do isochronous transfers.
+- 4 KiB of endpoint FIFO RAM. Endpoint 0 takes a fixed 64 bytes at address 0, leaving 4032 bytes. Each endpoint's
+  FIFO is 2^(SZ+3) bytes single-buffered or 2^(SZ+4) double-buffered (TXFIFOSZ / RXFIFOSZ), so a 672-byte packet
+  still takes a 1024-byte FIFO.
+- MAXPAYLOAD is at most 1024 bytes, and TXMAXP / RXMAXP bits 15-11 are reserved (Table 33-62). Those are the
+  high-bandwidth multiplier bits in other MUSB cores, so an endpoint moves one packet per frame (1 ms at full
+  speed) or per microframe (125 µs at high speed).
+- The DMA controller has 4 TX and 4 RX channels (CPPI 4.1).
+- High speed works on this board: card-reader mode negotiates it (POWER = 0x20 then 0x60). Composite mode clears
+  HSEN by choice ("Register order, both configurations" above).
+
+The stock FIFO plan (emulated, [stock-register-writes/usb0.csv](stock-register-writes/usb0.csv)) uses 960 of the
+4096 bytes:
+- endpoint 0: 64;
+- EP1 OUT (audio): 256 double-buffered = 512;
+- EP2 IN (audio): 256 single = 256;
+- EP3 IN and OUT (MIDI): 64 each.
+
+**Channels on one isochronous endpoint per direction** (48 kHz, packets sized with one spare frame, as the stock
+sizes 49 frames for 48):
+
+| Speed | Payload per endpoint | 16-bit | 24-bit | 32-bit |
+|---|---|---|---|---|
+| Full speed (stock) | 1023 bytes per 1 ms (49 frames) | 10 | 6 | 5 |
+| High speed | 1024 bytes per 125 µs (7 frames) | 73 | 48 | 36 |
+| High speed, 512-byte packets | 512 bytes per 125 µs | 36 | 24 | 18 |
+
+**What limits it first:**
+- **Full speed is one 12 Mbit/s bus shared by both directions.** One 1023-byte isochronous endpoint already uses
+  69% of a frame (USB 2.0 Table 5-4), and periodic transfers may use at most 90%. That leaves roughly 1300 bytes per
+  millisecond in total: about 13 channels at 16 bits or 8 at 24 bits, in and out combined (estimate). Example: 10
+  out and 3 in at 16 bits.
+- **FIFO RAM at high speed.** With endpoint 0 and the stock MIDI endpoints (192 bytes in all):
+  - two 1024-byte endpoints, single-buffered: 2240 bytes, fits;
+  - one of them double-buffered: 3264 bytes, fits;
+  - both double-buffered: 4288 bytes, does not fit.
+
+  TI advises double buffering for isochronous endpoints (33.2.7.1.4). With 512-byte packets both directions can be
+  double-buffered (2240 bytes), at the 512-byte row of the table.
+- **More endpoints add little.** Two TX and two RX endpoints are left after audio and MIDI. FIFO RAM still caps the
+  total at about three 1 KiB packets, and hosts treat several streaming interfaces in one direction as separate
+  devices.
+- **Class and host support.** Many channels at high speed means USB Audio Class 2: macOS, iOS and Linux support
+  it, and so does Windows 10 from version 1703 (class driver). The stock's class code is UAC1 and fixed at 2x2,
+  48 kHz, 16-bit, so this is new code, not a setting.
+- **CPU or DMA load.** At high speed each endpoint needs a FIFO load or unload every 125 µs: 8000 interrupts per
+  second per direction if the CPU copies. The CPPI DMA would carry it, as card-reader mode does for bulk. The
+  emulator models no CPPI DMA yet.
+
+**A reasonable target:** high speed, UAC2, 48 kHz, 24-bit. Send each of the 15 internal tracks (track indexes 0-14;
+"USB audio sample path" in [01-platform-map.md](01-platform-map.md)) as a stereo pair, plus the stereo mix: 32
+channels, 672 bytes per microframe. Send up to 8 channels back from the computer: 168 bytes. Both endpoints fit
+double-buffered: 2048 + 512 + 192 = 2752 bytes.
+Device questions: under "USB" in [UNKNOWNS.md](../UNKNOWNS.md).
+
 ## SD card (MMCSD0, `0x01C40000`)
 
 Simulated in the three products (`sd_card_hw_init` `0xC167270C`; HW-11): PINMUX10 nibbles 6, 7 = 8 (GP4[1], GP4[0]);

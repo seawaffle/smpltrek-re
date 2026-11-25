@@ -35,7 +35,7 @@ Products: S = SmplTrek, L = Lofi-12 XT, C = CyDrums, all = all three.
 | Settings (PREF / PREX) | Every validator, ranges, defaults, many labels (XF-6, XF-13, XF-17) | dozens of unlabelled fields per product (S) |
 | Content formats | WAV streams, AFTG and ORSL chunks, PDPT container (XF-11, XF-12) | PDPT fields, slice and tag records, CyDrums SystemCore (F, S) |
 | SD card | Command layer, controller, ISR, FatFs disk layer (HW-23, HW-25, HW-42..HW-45) | origin, speed in practice, CyDrums write paths (S, Sim, D) |
-| USB | Bring-up, descriptors, usblib origin, MIDI task context, audio path, same in all products (HW-12, HW-18, HW-40, HW-59, XF-10, XF-25); device-only, no host path (HW-69) | class-code origin (S); ID and VBUS wiring for host mode (D) |
+| USB | Bring-up, descriptors, usblib origin, MIDI task context, audio path, same in all products (HW-12, HW-18, HW-40, HW-59, XF-10, XF-25); device-only, no host path (HW-69); channel capacity from the TRM (HW-74) | class-code origin (S); ID and VBUS wiring for host mode (D); high-speed isochronous on the board (D) |
 | MIDI and SYNC | DIN UART, settings, receive slots, SYNC IN/OUT (HW-27, HW-31) | handler bodies, UART2, SYNC electrics (S, B) |
 | Power | Power manager, hold latch, keys, battery thresholds (XF-8, HW-24) | battery channel, GP3[7], busy checks (S, D) |
 | RTOS and memory | Tasks, Hwi/Swi, SYS/BIOS 6.76.03.01, heap, copy table (XF-7, LIB-3, MEM-1) | run-time use of the DDR gap, heap headroom (S, D) |
@@ -242,6 +242,10 @@ Mapped in `docs/06-audio-engine.md`, claims AUD-1..AUD-12 (2026-11-17).
 - Card-reader mode past its CPPI DMA start: the high-speed enumeration (it sets HSEN: POWER = 0x20 then 0x60,
   emulated, `docs/stock-register-writes/`), the generic-RNDIS transfers and the remount on leaving the mode. The
   emulator models no CPPI DMA. D (with a USB analyser), Sim (CPPI model)
+- USB audio capacity (HW-74): isochronous transfers at high speed on this board, and the CPU or DMA cost of a FIFO
+  load every 125 µs. The channel counts in `04-hardware-access.md` "USB audio channel capacity" are arithmetic on
+  the TRM's limits. Device check: a test image that enumerates a high-speed UAC2 device with one 1024-byte
+  isochronous IN endpoint and counts dropped microframes. D, Sim (CPPI model)
 
 ### MIDI and SYNC
 - The MIDI receive handler bodies per product; MIDI word [2] in Lofi and CyDrums. `01-platform-map.md` "MIDI". S
