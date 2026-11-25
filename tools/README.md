@@ -13,6 +13,12 @@
   flashed to a CyDrums or a Lofi-12 XT.
   Step-by-step guide for newcomers: `../docs/13-palette-swap-howto.md`.
   Tests: `python3 -B -m unittest discover -s tools -p "test_palette*.py"`
+- `cydrums_wavetables.py` — list, export and rebuild CyDrums' wavetable bank (`/CyDrums/System/SystemCore.bin`):
+  `build SystemCore.bin OUT.bin --set 5=mytable.wav:MyName` replaces slot 5 with your wavetable (2048-sample frames,
+  Serum / Vital style, brought to 256 frames). Step-by-step guide: `../docs/18-cydrums-wavetables-howto.md`. Format: `../docs/01-platform-map.md` "CyDrums wavetable bank". Keep the
+  bank and anything exported from it local (Sonicware content).
+  Tests: `python3 -B -m unittest discover -s tools -p "test_cydrums*.py"` (17, about 20 s); firmware check in the
+  emulator: `python3 -B emulator/tests/stock_cydrums_wavetables.py --stock`, then without `--stock`.
 - `sonicware_integrity.py` — descriptor-based modern-container parser and recovered
   IEEE CRC-32 verifier. Validated across all eight SmplTrek and three Lofi-12 XT
   releases here. Example:

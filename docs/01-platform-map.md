@@ -1105,6 +1105,45 @@ CyDrums 1.1.84 execute packets, with the card writes simulated where marked; no 
   useful boot and display test with no card writes, but little else is testable. A functional test needs a
   separate card prepared from `CyDrums_folder.zip`, which CyDrums will write to (configs, projects, `filedb.bin`).
 
+## CyDrums wavetable bank (SystemCore.bin; 2026-11-24)
+
+CyDrums' 64 oscillator wavetables (WAVE 1-64) are on the card, in `/CyDrums/System/SystemCore.bin` from
+`CyDrums_folder.zip` (67,116,544 bytes). Decoded from that file and CyDrums 1.1.84 code; the tool
+`tools/cydrums_wavetables.py` lists, exports and rebuilds it (tests: `tools/test_cydrums_wavetables.py`, with a
+byte-for-byte rebuild of the stock file when the zip is present; user guide `18-cydrums-wavetables-howto.md`).
+
+- **Chunk shape:** `tag[4]`, u32 total length (header included), three u32 header words, payload. The same
+  container as `.SoundConfig` (DNPP / PTC0), `.KitConfig` (DNKP), `.EfxConfig` (DNEP) and the project files (DNP0).
+- **Index:** `WTLS` (words 0, 64, payload length; 7400 bytes) holding 64 `WTDT` records (0, 3, 0), each with
+  - `WTNM` (0, 1, n): the display name, NUL-terminated, 0xFF-padded to a multiple of 4 (8 or 12 bytes in the stock
+    file). The firmware has no copy of these short names, so the screen shows WTNM.
+  - `WTFT` (0, 1, 16): u16 0, u16 channels (1), u32 rate, u32 0, u16 0, u16 bits (16). Rate: 24000 for 50 tables,
+    11 at 44100, 384000 for SmpSnare / SmpCymbl / SmpCrsh.
+  - `WTPL` (0, 1, 8): u32 offset (slot x 0x100000), u32 length (0x100000).
+- **Data:** from base = (WTLS length + 511) & ~511 = 0x1E00 (index reader `0xC25ABBF0`, rounding at `0xC25ABCC8`;
+  0xFF fill before it). Each table is 1 MiB of signed 16-bit little-endian mono: 256 frames of 2048 samples
+  (autocorrelation peaks at 2048 in every periodic table; the three Smp tables are plain samples).
+- **Reader:** `0xC25ABBF0` opens the file, reads the 8-byte header, then the whole index; `0xC25ABB4C` walks the
+  WTDT records and `0xC25ABA08` their children into a 64-entry table (24 bytes each: WTFT then WTPL; names kept
+  separately; count at +1544). At most 64 entries.
+- **Loader (`0xC25AB8D0`):** on demand, when a sound uses the table: allocates 1 MiB, `file_lseek` to base + offset,
+  reads `length` bytes, keeps channels, rate and bits, sample count = length / (bits / 8 x channels). In the
+  emulator, the tables the shipped project's sounds use are loaded at start-up (about 9,900 SD read commands in
+  6 s); the others are not.
+- **Patches refer to wavetables two ways:** `PWT0` (one per oscillator, header word 1 = oscillator) starts with a u16
+  wavetable number, 0-based, 0xFFFF = none; `PWP0` holds the stock source file name (`sine_moph1_24k_16.wav`), from
+  a fixed 64-pointer table in the firmware (`0xC26C4950`, same order as the bank). All 64 numbers are used by the
+  shipped projects. Which of the two the firmware trusts on load is not traced, so a custom bank should keep slot
+  order: replacing slot N changes every sound that uses WAVE N.
+- **Custom bank, checked in the emulator (2026-11-24, `emulator/tests/stock_cydrums_wavetables.py`):** with the
+  shipped bank, CyDrums 1.1.84 loads 24 tables at start-up (slots 1, 3-21, 43, 45, 62, 63), each equal to the file.
+  With a bank built by the tool (slot 1 a 4-frame saw-to-square morph; all 11 short-named slots renamed to 10
+  characters, so the index grows to 7444 bytes and later records move) it loads the same 24 slots, slot 1 with the
+  new data and no stock slot 1 anywhere in RAM, and the rest equal to the card. Not run on a unit; the sound and
+  the displayed names were not checked.
+- **Not known:** where the engine uses the rate word (the tool writes 24000), and how the oscillator maps WAVE
+  position onto the 256 frames.
+
 ## CyDrums 2.0.97 beta (2026-11-18)
 
 The beta update `CyDrums_v2.0.97beta.zip` (same container, one system image, no content or MCU images) adds sampling

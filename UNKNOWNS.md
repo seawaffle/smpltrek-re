@@ -94,7 +94,9 @@ Mapped in `docs/06-audio-engine.md`, claims AUD-1..AUD-12 (2026-11-17).
 - Lofi-12 XT: ORSL slice-record and AFTG field layouts, the Favorite tag bit, odd-pad tag order, whether 0xC2BB84D4
   replaces a file. `01-platform-map.md` "Audio file commands (AudioFileControlTask; read in each product 2026-11-10)", 1700.
 - Whether anything calls the `smpl` chunk writer; whether Lofi and CyDrums write the project tempo. `01-platform-map.md` "Audio file commands (AudioFileControlTask; read in each product 2026-11-10)".
-- CyDrums: `SystemCore.bin` chunks (WTLS / WTDT / WTNM), `.KitConfig` / `.SoundConfig` / `.EfxConfig`, the three
+- CyDrums: `SystemCore.bin` is decoded (`01-platform-map.md` "CyDrums wavetable bank"); still open there: where the
+  engine uses WTFT's rate word, and whether a patch resolves its wavetable by PWT0 number or PWP0 name.
+  `.KitConfig` / `.SoundConfig` / `.EfxConfig` field meanings (same chunk container), the three
   ResourceLoader functions (0xC258CBE4, 0xC256F26C, 0xC25B7F98). `01-platform-map.md` "Clock tick (1 ms in all three)".
 - CyDrums 2.0.97 beta (XF-18, `01-platform-map.md` "CyDrums 2.0.97 beta"): the auto-rec threshold, the import loader's accepted formats
   (inferred), the mod-LFO and SP-standard sound parameters, and whether the final 2.0 differs from the beta.
