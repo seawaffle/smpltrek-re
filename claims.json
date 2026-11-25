@@ -1,6 +1,6 @@
 {
   "format": "smpltrek-claims/1",
-  "updated": "2026-11-23",
+  "updated": "2026-11-25",
   "scope": "All device-level claims come from ONE unit, bootloader v1.0.17, unless noted. Seeds, checks and bootloader behaviour may differ on other units or bootloader versions.",
   "statuses": {
     "observed-device": "Seen on hardware; evidence pinned (photo, transcript, or recorded artifact hash plus the operator's observation).",
@@ -1610,6 +1610,19 @@
         "docs/17-elz1.md"
       ],
       "notes": "Hardware set-up, audio, USB, task table and container layout are unchanged across the seven (see ELZ-1..ELZ-11). A NUL-delimited string diff mis-dated USB MIDI, CUSTOM REVERB, ADSR ENVELOPE and the LED test line (present in all seven); only grep-confirmed items are claimed."
+    },
+    {
+      "id": "HW-74",
+      "area": "hardware",
+      "claim": "USB0 can carry at most one 1024-byte isochronous packet per endpoint per (micro)frame: 4 TX and 4 RX endpoints besides EP0, 4 KiB FIFO RAM (EP0 fixed at 64 bytes), MAXPAYLOAD up to 1024 with TXMAXP/RXMAXP bits 15-11 reserved (no high-bandwidth multiplier). At 48 kHz with one spare frame per packet, one endpoint per direction carries 10 (16-bit) / 6 (24-bit) channels at full speed and 73 / 48 channels at high speed. FIFO RAM fits two 1024-byte isochronous endpoints, at most one of them double-buffered, beside EP0 and the stock MIDI endpoints. The stock FIFO plan uses 960 bytes.",
+      "status": "inferred-static",
+      "confidence": "medium-high",
+      "evidence": [
+        "TI SPRUH79C 33.1.2 (Features), Table 33-62 (TXMAXP), Tables 33-85/33-86 (FIFO size), 33.2.7.1.4 (isochronous)",
+        "docs/stock-register-writes/usb0.csv (FIFO size and address writes, emulated)",
+        "USB 2.0 specification Table 5-4 and section 5.6.4 (full-speed bus share)"
+      ],
+      "notes": "2026-11-25. Arithmetic on documented limits; the full-speed shared-bus figure (about 13 channels at 16 bits, in and out combined) is an estimate. High-speed isochronous on this board and the CPU or DMA cost are device questions (UNKNOWNS.md \"USB\"). docs/04-hardware-access.md \"USB audio channel capacity\"."
     }
   ]
 }
