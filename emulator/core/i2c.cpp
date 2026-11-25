@@ -26,6 +26,7 @@ void I2c::reset_logic() {
 }
 void I2c::reset() {
     regs.fill(0); regs[0x2c / 4] = 1; regs[0x34 / 4] = 0x4415; regs[0x38 / 4] = 6;
+    regs[0x1c / 4] = 0x3ff; // ICSAR resets to 0x3FF (SPRUH79C Figure 21-20)
     starts = stops = bytes_sent = bytes_received = nacks = 0;
     reset_logic();
 }

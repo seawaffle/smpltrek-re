@@ -3218,6 +3218,44 @@ int c6_mmio_access(void *handle, uint64_t sequence, uint64_t *cycle, uint32_t *f
         fields[3] = access.size; fields[4] = access.write;
     });
 }
+int c6_psc_strict(void *handle, uint32_t enabled) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("PSC checks need the board");
+        m->board.psc_strict = enabled;
+    });
+}
+int c6_psc_violations(void *handle, uint64_t since, uint64_t *rows, uint32_t capacity, uint64_t *fields) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("PSC checks need the board");
+        const auto &log = m->board.psc_violations;
+        uint64_t total = m->board.psc_logged, first = total - log.size(), from = std::max(since, first);
+        uint32_t count = 0;
+        for (uint64_t n = from; n < total && count < capacity; n++, count++) {
+            const auto &v = log[size_t(n - first)];
+            uint64_t *row = rows + 7 * count;
+            row[0] = v.cycle; row[1] = v.pc; row[2] = v.address; row[3] = v.write; row[4] = v.psc; row[5] = v.module; row[6] = v.state;
+        }
+        fields[0] = count; fields[1] = from + count; fields[2] = first; fields[3] = total;
+    });
+}
+int c6_psc_modules(void *handle, uint32_t *rows) {
+    auto m = static_cast<Machine *>(handle);
+    return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("PSC checks need the board");
+        static constexpr uint32_t base[2] = {0x01c10000, 0x01e27000};
+        for (unsigned index = 0; index < 2; index++)
+            for (unsigned module = 0; module < 32; module++) {
+                uint32_t *row = rows + 3 * (index * 32 + module);
+                row[0] = row[1] = row[2] = 0;
+                if (index == 0 && module >= 16) continue;   // PSC0 has modules 0-15
+                row[0] = m->board.read(base[index] + 0xa00 + module * 4, 4, m->cycles, 0, false);
+                row[1] = m->board.read(base[index] + 0x800 + module * 4, 4, m->cycles, 0, false);
+                row[2] = m->board.psc_assumed[index][module];
+            }
+    });
+}
 int c6_capture_start(void *handle, const uint32_t *ranges, uint32_t count, uint32_t writes_only, uint64_t limit) {
     auto m = static_cast<Machine *>(handle);
     return guarded(m, [&] {

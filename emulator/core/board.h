@@ -20,6 +20,8 @@ struct BoardAccess {
     uint64_t cycle;
     uint32_t pc, address, value, size, write;
 };
+// A guest or DMA access to a peripheral whose PSC module was not in the Enable state (MDSTAT state != 3).
+struct PscViolation { uint64_t cycle; uint32_t pc, address, write, psc, module, state; };
 // One row of an MMIO capture: a write, or a read (`repeat` counts identical reads folded into it: a poll).
 struct CaptureRow {
     uint64_t cycle;
@@ -74,6 +76,15 @@ public:
     bool reserved_write(uint32_t address, const uint8_t *data, uint32_t size, uint64_t cycle, uint32_t pc, bool guest);
     bool enabled = false;
     uint64_t accesses = 0;
+    // Accesses to peripherals whose PSC module is not enabled (SPRUH79C Tables 8-1, 8-2). Recorded, not fatal,
+    // unless psc_strict: then the first one faults. The latest PSC_LOG are kept; psc_logged counts them all.
+    static constexpr size_t PSC_LOG = 65536;
+    std::deque<PscViolation> psc_violations;
+    uint64_t psc_logged = 0;
+    bool psc_strict = false;
+    // Where each module's state at enable() came from: 0 the TRM's reset default, 1 assumed bootloader hand-off.
+    std::array<std::array<uint8_t, 32>, 2> psc_assumed{};
+    void psc_check(uint32_t address, bool write, uint64_t cycle, uint32_t pc);
     // Whole-sequence capture of chosen address ranges, drained by the host (c6_capture_take) so nothing is
     // lost while the drain keeps up; past `limit` rows waiting, new rows are counted in `dropped`.
     struct Capture {

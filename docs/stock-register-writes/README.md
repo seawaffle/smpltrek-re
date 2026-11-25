@@ -109,6 +109,8 @@ The remount after leaving card-reader mode was not reached (static, inference): 
 - **Card-reader mode past its DMA start**: the high-speed enumeration, the RNDIS/CPPI transfers and the remount on exit. The stock image would have to run on the unit with a USB analyser, or the emulator would need CPPI.
 - **Status and self-clearing bits in `before`**: these come from the software's view, as above.
 
+**The other products.** [common/](common/README.md) captures SmplTrek 3.2.174, Lofi-12 XT 1.5.205 and CyDrums 1.1.84 under one product-neutral scenario and diffs them. The USB, I2C and codec sequences are identical in all three. McASP/EDMA differ only in the audio block size (128 frames against 96) and buffer addresses. The SD card set-up is identical.
+
 Regenerate (needs firmware/ and the emulator build):
 
 ```bash

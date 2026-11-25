@@ -146,7 +146,9 @@ class UsbDisconnected(unittest.TestCase):
         with self.machine() as cpu:
             self.assertEqual(self.get(cpu, BASE), 0x4ea10800)
             self.assertEqual(self.get(cpu, BASE + 4), 0)
-            self.assertEqual(self.get(cpu, BASE + 0x406, 2), 1)
+            # INTRTXE, INTRRXE, INTRUSBE at SPRUH79C's reset values (33.4.25, 33.4.26, 33.4.28)
+            self.assertEqual((self.get(cpu, BASE + 0x406, 2), self.get(cpu, BASE + 0x408, 2), self.get(cpu, BASE + 0x40b, 1)),
+                             (0x1f, 0x1e, 0x06))
             with self.assertRaisesRegex(ValueError, "PSC clock"):
                 self.put(cpu, BASE + 4, 1)
             self.assertEqual(self.get(cpu, BASE + 4), 0)
@@ -159,6 +161,8 @@ class UsbDisconnected(unittest.TestCase):
             cpu.run(1)
             self.assertEqual(self.get(cpu, BASE + 4), 0)
             self.assertEqual(self.get(cpu, BASE + 0x401, 1), 0x20)       # HSENAB, as the core comes out of reset
+            self.assertEqual((self.get(cpu, BASE + 0x406, 2), self.get(cpu, BASE + 0x408, 2), self.get(cpu, BASE + 0x40b, 1)),
+                             (0x1f, 0x1e, 0x06))                          # and the enables, after the soft reset too
             self.assertEqual(self.get(cpu, BASE + 0x2c), 0)
             self.assertEqual(cpu.usb_state()["soft_resets"], 1)
 

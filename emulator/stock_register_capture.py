@@ -21,6 +21,12 @@ recorded alongside. Each phase is the stretch of guest time between two marks:
   rec_src_N      REC SRC (FUNC + EDIT, encoder A) stepped to source N: down to 0, then up to 12 (the input routes)
   power_off      the power key held 3 s (the power-off handler), then released
 
+`--common PRODUCT` runs instead one product-neutral scenario on SmplTrek 3.2.174, Lofi-12 XT 1.5.205 or CyDrums
+1.1.84 (erased flash, a blank 32 MiB card, a MIDI note on channel 1 for bulk OUT; CyDrums gets the card contents it
+ships with instead, because with a blank card it switches USB to mass storage at start-up): boot, attach, bus_reset,
+enumeration, bulk_out, interface_on, interface_off, suspend, detach and power_off, written to
+common-<product>.json, so the three products' drivers can be compared on equal terms (stock_register_diff.py).
+
 A second run, from reset again, covers card-reader mode, which the emulator can only start:
 
   boot           as above
@@ -40,10 +46,13 @@ import json
 from pathlib import Path
 import struct
 import sys
+import zipfile
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 from build import WORK
+from media import build_card
 from project_card import MS, project_card
 from stock import Stock
 
@@ -60,19 +69,43 @@ RANGES = [(0x01E00000, 0x01E10000),            # USB0: core, wrapper, CPPI
           (0x01C40000, 0x01C40078)]            # MMCSD0
 
 
-def capture(output, scenario, genre="FUNK", seed=1):
-    card, flash, description = project_card(output / "card.img", genre, seed)
-    result = dict(scenario=scenario, project=description, phases=[], fault=None)
-    with Stock(card=card, flash_image=flash, reserved_low_writes=True) as stock:
+FIRMWARE = {"smpltrek": ROOT / "firmware/smpltrek/SmplTrek v3.2.174.zip",
+            "lofi12": ROOT / "firmware/lofi12/Lofi-12XT_v1.5.205.zip",
+            "cydrums": ROOT / "firmware/cydrums/CyDrums_v1.1.84.zip"}
+
+
+def capture(output, scenario, product="smpltrek", genre="FUNK", seed=1):
+    if scenario == "common" and product == "cydrums":
+        # With a blank card CyDrums 1.1.84 switches USB to mass storage at start-up (CPPI DMA, which the emulator
+        # stops at), so it gets the card contents it ships with (CyDrums_folder.zip, extracted under work/ only).
+        folder = output / "cydrums-card"
+        with zipfile.ZipFile(ROOT / "firmware/cydrums/CyDrums_folder.zip") as archive:
+            archive.extractall(folder)
+        files = {"/" + str(path.relative_to(folder)): path for path in sorted(folder.rglob("*")) if path.is_file()}
+        card = build_card(output / "card-cydrums.img", files, size_mb=128, long_names=True)
+        flash, description = None, dict(card="128 MiB card with CyDrums_folder.zip's contents", flash="erased")
+    elif scenario == "common":
+        # The same for every product: erased flash, a blank card, no product-specific menus.
+        card, flash = build_card(output / f"blank-{product}.img", size_mb=32), None
+        description = dict(card="blank 32 MiB FAT card", flash="erased")
+    else:
+        card, flash, description = project_card(output / "card.img", genre, seed)
+    result = dict(scenario=scenario, product=product, firmware=FIRMWARE[product].name, project=description,
+                  phases=[], fault=None)
+    with Stock(FIRMWARE[product], card=card, flash_image=flash, reserved_low_writes=True, profile=product,
+               reserved_low_reads=product != "smpltrek") as stock:
         cpu = stock.cpu
         codec_since = sd_since = 0
         cpu.capture_start(RANGES)
+
+        pending = []   # rows taken during the phase, so the capture never fills up
 
         def advance(milliseconds):
             for part in [100] * (milliseconds // 100) + [milliseconds % 100] * bool(milliseconds % 100):
                 report = stock.run(part * MS, 1000000)
                 if report["error"]:
                     raise RuntimeError(report["error"])
+                pending.extend(cpu.capture_take())
 
         def press(*keys):
             for key in keys:
@@ -96,12 +129,17 @@ def capture(output, scenario, genre="FUNK", seed=1):
 
         current = ["boot"]
 
+        psc_since = 0
+
         def mark(name, **extra):
-            nonlocal codec_since, sd_since
-            mmio = cpu.capture_take()
+            nonlocal codec_since, sd_since, psc_since
+            mmio = pending + cpu.capture_take()
+            pending.clear()
             codec, codec_since = cpu.codec_log(codec_since)
             sd, sd_since = cpu.sd_log(sd_since)
-            result["phases"].append(dict(name=name, end=cpu.cycles(), mmio=mmio, codec=codec, sd=sd, **extra))
+            psc, psc_since = cpu.psc_violations(psc_since)
+            result["phases"].append(dict(name=name, end=cpu.cycles(), mmio=mmio, codec=codec, sd=sd, psc_violations=psc,
+                                         **extra))
             current[0] = None
 
         def source():
@@ -130,12 +168,29 @@ def capture(output, scenario, genre="FUNK", seed=1):
                 advance(3000)
                 mark("card_reader", active=struct.unpack("<I", cpu.read(CARD_READER_ACTIVE, 4))[0])
                 return result
-            channel = struct.unpack("<I", cpu.read(SETTINGS + 0x8c, 4))[0]
+            channel = 0 if scenario == "common" else struct.unpack("<I", cpu.read(SETTINGS + 0x8c, 4))[0]
             sent = [cpu.usb_out(0x03, bytes([0x09, 0x90 | channel, 36, 110]))["status"]]
             advance(300)
             sent.append(cpu.usb_out(0x03, bytes([0x08, 0x80 | channel, 36, 0]))["status"])
             advance(50)
             mark("bulk_out", transfers=sent)
+            if scenario == "common":
+                replies = [cpu.usb_set_interface(1, 1)["status"], cpu.usb_set_interface(2, 1)["status"]]
+                advance(20)
+                mark("interface_on", replies=replies)
+                replies = [cpu.usb_set_interface(1, 0)["status"], cpu.usb_set_interface(2, 0)["status"]]
+                advance(20)
+                mark("interface_off", replies=replies)
+                cpu.usb_sof(False); advance(10)
+                suspended = cpu.usb_state()["suspended"]
+                cpu.usb_sof(True); advance(10)
+                mark("suspend", suspended=suspended, resumed=not cpu.usb_state()["suspended"])
+                cpu.usb_detach(); advance(50)
+                mark("detach")
+                cpu.gpio_input(3, 0, False); advance(3000)
+                cpu.gpio_input(3, 0, True); advance(1000)
+                mark("power_off")
+                return result
             press(FUNC, HOME)
             for _ in range(4): press(DOWN)
             press(OK); press(DOWN); press(DOWN); press(OK)
@@ -189,18 +244,24 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--conditional", action="store_true", help="accept the logged reserved low-store assumption")
     parser.add_argument("--output", type=Path, default=WORK / "register-capture")
+    parser.add_argument("--common", choices=tuple(FIRMWARE), help="instead of SmplTrek's full runs, the common "
+                        "scenario for one product (common-<product>.json)")
     args = parser.parse_args(argv)
     if not args.conditional:
         parser.error("--conditional is required")
     args.output.mkdir(parents=True, exist_ok=True)
-    runs = [capture(args.output, scenario) for scenario in ("main", "card_reader")]
-    (args.output / "raw.json").write_text(json.dumps(runs) + "\n")
+    if args.common:
+        runs = [capture(args.output, "common", args.common)]
+        (args.output / f"common-{args.common}.json").write_text(json.dumps(runs) + "\n")
+    else:
+        runs = [capture(args.output, scenario) for scenario in ("main", "card_reader")]
+        (args.output / "raw.json").write_text(json.dumps(runs) + "\n")
     for result in runs:
         print(f'== {result["scenario"]}')
         for phase in result["phases"]:
             writes = sum(1 for row in phase["mmio"] if row["write"])
-            print(f'{phase["name"]:14} {len(phase["mmio"]):6} MMIO rows ({writes} writes), {len(phase["codec"])} codec, '
-                  f'{len(phase["sd"])} SD commands', {k: v for k, v in phase.items() if k not in ("name", "end", "mmio", "codec", "sd", "steps")})
+            print(f'{phase["name"]:14} {len(phase["mmio"]):6} MMIO rows ({writes} writes), {len(phase["psc_violations"])} PSC violations, {len(phase["codec"])} codec, '
+                  f'{len(phase["sd"])} SD commands', {k: v for k, v in phase.items() if k not in ("name", "end", "mmio", "codec", "sd", "steps", "psc_violations")})
         print("fault:", result["fault"])
     # The card-reader run is expected to end in the emulator's unmodelled CPPI access.
     return 1 if runs[0]["fault"] else 0

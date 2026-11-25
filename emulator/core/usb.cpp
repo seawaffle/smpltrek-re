@@ -32,8 +32,9 @@ void Usb::raise(uint16_t tx, uint16_t rx, uint8_t usb) {
 }
 void Usb::core_reset() {
     control = source = mask = 0;
-    tx_enable = 1; rx_enable = intrtx = intrrx = 0;
-    faddr = address = usb_enable = intrusb = index = 0; power = POWER_RESET;
+    // SPRUH79C reset values: INTRTXE 0x1F, INTRRXE 0x1E, INTRUSBE 0x06 (33.4.25, 33.4.26, 33.4.28).
+    tx_enable = 0x1f; rx_enable = 0x1e; intrtx = intrrx = 0;
+    faddr = address = intrusb = index = 0; usb_enable = 0x06; power = POWER_RESET;
     in_service = core_line = faddr_pending = false;
     stage = Stage::Idle;
     rx_ready = tx_ready = sent_stall = data_end = setup_end = send_stall = false;

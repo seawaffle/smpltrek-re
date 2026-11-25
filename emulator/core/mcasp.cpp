@@ -13,6 +13,8 @@ constexpr uint64_t SLOT_CYCLES = 3875, FRAME_CYCLES = 7750;
 }
 void Mcasp::reset() {
     regs = {}; tx.reset(); rx.reset(); tx_due = rx_due = UINT64_MAX;
+    // SPRUH79C reset values: ACLKRCTL 0x20, AHCLKRCTL 0x8000, ACLKXCTL 0x60, AHCLKXCTL 0x8000.
+    regs[0x70 / 4] = 0x20; regs[0x74 / 4] = 0x8000; regs[0xb0 / 4] = 0x60; regs[0xb4 / 4] = 0x8000;
     tx_slot = rx_slot = 0; tx_notified = rx_notified = irq = tx_failed = false;
     transmitted = received = underruns = overruns = 0; output.clear();
     input.clear(); input_position = 0; input_loop = false;

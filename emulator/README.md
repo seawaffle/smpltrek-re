@@ -1262,30 +1262,56 @@ Host-side `cpu.read` and `cpu.write` are not captured: only the guest's own acce
 - power-off;
 - in a second run, card-reader mode as far as the emulator goes.
 
-It writes `work/register-capture/raw.json`. `stock_register_tables.py` turns that into
+It writes `work/register-capture/raw.json`. With `--common smpltrek|lofi12|cydrums` it runs a product-neutral scenario instead, and `stock_register_diff.py` compares the three products' tables ([common/](../docs/stock-register-writes/common/README.md)). `stock_register_tables.py` turns that into
 [docs/stock-register-writes/](../docs/stock-register-writes/README.md). Register names, widths, reset values and
 fields come from `register_map.json`, which `register_map_build.py` rebuilds from SPRUH79C and SLAS509G.
 
-**Reset values against SPRUH79C** (`register_reset_audit.py`; a fresh board, each register read at its own width,
-only the bits the TRM gives compared). 395 registers match and 199 cannot be read in the model; those are mostly
-CPPI DMA and queue-manager words and a few write-only or FIFO registers.
+**Reset values against SPRUH79C** (`register_reset_audit.py`). The script reads a fresh board register by register, each at its own width, and compares only the bits the TRM gives.
 
-These differ, all on registers the stock writes before relying on them:
+Since 2026-11-24 the model takes these from the TRM (all were 0 or other values before):
 
-| Register | TRM reset | Emulator | Note |
+| Register | Reset | Note |
+|---|---|---|
+| USB0 INTRTXE, INTRRXE, INTRUSBE | 0x1F, 0x1E, 0x06 | at power-on and after each CTRLR reset |
+| McASP0 ACLKRCTL, ACLKXCTL | 0x20, 0x60 | |
+| McASP0 AHCLKRCTL, AHCLKXCTL | 0x8000 | |
+| I2C0 ICSAR | 0x3FF | |
+| SYSCFG0 CFGCHIP2 | 0xEF00 | PHY and OTG powered down, USB0OTGMODE 3 |
+| SYSCFG0 SUSPSRC | 0xFFFFFFFF | |
+| SYSCFG0 MSTPRI0-2 | 0x44442222, 0x44440000, 0x54604404 | |
+| SYSCFG0 CFGCHIP3, CFGCHIP4 | 0xFF00 | |
+| PSC0/PSC1 PDCTL0/1 | 0x001FF101 | |
+| EDMA3CC QWMTHRA | 0x1010 | |
+| MMCSD0 MMCST1 | 0x2 | FIFOEMP and DXEMP read 0 until MMCFIFOCTL is written or data moves; after that they follow the FIFO |
+
+The stock and Enaga write all of these before relying on them. The remaining differences are deliberate or not worth modelling:
+
+| Register | TRM figure | Emulator | Why |
 |---|---|---|---|
-| SYSCFG0 KICK0R / KICK1R | 0 | the unlock keys | the model starts unlocked, as after the bootloader (stock app start) |
-| SYSCFG0 SUSPSRC | 0xFFFFFFFF | 0 | not modelled |
-| SYSCFG0 CFGCHIP2 | 0xEF00: PHY and OTG powered down, USB0OTGMODE 3 ("force host operation with VBUS low") | 0 | the stock writes 0x0972 whole; what the bootloader leaves is not known |
-| I2C0 ICSAR | 0x3FF | 0 | the stock writes 0x18 |
-| MMCSD0 MMCST1 | 0x2 (CLKSTP) | 0x26 (also DXEMP, FIFOEMP) | status bits |
-| McASP0 ACLKRCTL, ACLKXCTL | 0x20, 0x60 | 0 | the stock writes both |
-| McASP0 AHCLKRCTL, AHCLKXCTL | 0x8000 | 0 | the stock writes both |
-| USB0 INTRTXE, INTRRXE, INTRUSBE | 0x1F, 0x1E, 0x06 | 0x01, 0, 0 | known: see "Which interrupt registers to read" |
+| SYSCFG0 KICK0R, KICK1R | 0 | the unlock keys | the bootloader's assumed hand-off (unlocked); not traced |
+| PSC0 modules 11, 12, 15; PSC1 modules 24-31 (MDCTL/MDSTAT) | SwRstDisable | Enable | the register figure gives the generic reset; SPRUH79C Tables 8-1 and 8-2 list these modules as Enable by default |
+| PSC1 module 6 (DDR2) | SwRstDisable | Enable | the bootloader's assumed hand-off (the app runs from DDR) |
+| PSC0/PSC1 PDSTAT0/1 | 0 | 1 (on) | the always-on domain is on whenever the chip runs |
+| I2C0 ICDMAC | 0x3 | 0 | I2C DMA events are not modelled; a 3 here would promise events that never come |
+| MMCSD0 SDIOST0 | 0x1 | 0 | DAT1 level; SDIO is not modelled |
+| McASP0 XSLOT | 0x17F | 0 | the current transmit slot counter, a live value |
+| USB0 REVID | 0x4EA1 | 0x4EA10800 | a parsing artefact: SPRUH79C's register table gives 0x4EA10800, as the model does |
 
-POWER's reset (0x20, HSENAB set) was taken from the unit (session 6) and matches the TRM. Forty-two more
-mismatches are on registers the stock never touches: run the script for the full list. None of the above is
-changed in the model yet.
+**PSC module checks (2026-11-24).** Every guest or EDMA access to a peripheral whose PSC module is not in the Enable state is recorded:
+- `psc_violations(since=0)` returns `(rows, next_since)`. Each row has `cycles`, `pc`, `address`, `write`, `psc`, `module` and `state` (`SwRstDisable`, `SyncReset` or `Disable`).
+- The module map is SPRUH79C Tables 8-1 and 8-2:
+  - PSC0: 0-2 EDMA3 CC/TC0/TC1, 4 SPI0, 5 MMC/SD0, 9 UART0;
+  - PSC1: 1 USB0, 3 GPIO, 6 DDR2, 7 McASP0, 10 SPI1, 11 I2C1, 12 UART1, 13 UART2.
+- I2C0, the timers, SYSCFG and the PSCs have no module and are never flagged.
+- Recording never stops the guest. `psc_strict(True)` makes the first violation fault instead.
+- `psc_modules()` lists every module's MDCTL and MDSTAT state. Its `assumed` flag marks states the board starts with as an assumed bootloader hand-off (DDR, and GPIO with the hand-off) rather than SPRUH79C's default; what BOOT 1.0.17 really leaves is not traced.
+- Before this, only EDMA, GPIO and SPI accesses with their module off faulted, and they still do.
+
+The stock 3.2.174, through every phase of `stock_register_capture.py`, makes two kinds:
+- At boot, `fn_C1662C38` reads and writes UART1's PWREMU_MGMT (0x01D0C030) while PSC1 module 12 is still SwRstDisable, before its own PSC enable. Either the chip tolerates it or the bootloader leaves UART1 on; neither is known.
+- In card-reader mode only, a DEVCTL read (0x01E00460, PC 0xC15E2000) while it cycles PSC1 module 1 through Disable to reset USB0.
+
+No USB0 access happens with the module off in any other phase.
 
 ## Backlog
 

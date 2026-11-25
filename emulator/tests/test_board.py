@@ -56,6 +56,31 @@ class Board(unittest.TestCase):
             self.put(cpu, 0x01800044, 1 << 4)
             self.assertEqual(self.get(cpu, 0x01800004), 0)
 
+    def test_access_to_a_peripheral_whose_psc_module_is_off_is_recorded_and_faults_only_when_strict(self):
+        program = ["ldbu .D1T1 *a4,a5", "nop 4", "ldw .D1T1 *a6,a7", "nop 4"]
+        with self.machine(program) as cpu:
+            cpu.set_register("a4", 0x01e00401)                            # USB0 POWER: PSC1 module 1, off at reset
+            cpu.set_register("a6", 0x01c2201c)                            # I2C0 ICSAR: no PSC module
+            self.assertEqual(cpu.run(100)["status"], "returned")
+            rows, following = cpu.psc_violations()
+            self.assertEqual([(r["address"], r["write"], r["psc"], r["module"], r["state"], r["pc"]) for r in rows],
+                             [(0x01e00401, False, 1, 1, "SwRstDisable", 0x1000)])
+            self.assertEqual(cpu.psc_violations(following), ([], following))
+            modules = {(m["psc"], m["module"]): m for m in cpu.psc_modules()}
+            self.assertEqual((modules[(1, 1)]["state"], modules[(1, 1)]["assumed"]), ("SwRstDisable", False))
+            self.assertEqual((modules[(1, 6)]["state"], modules[(1, 6)]["assumed"]), ("Enable", True))   # DDR: hand-off
+        with self.machine(program) as cpu:
+            cpu.set_register("a4", 0x01e00401); cpu.set_register("a6", 0x01c2201c)
+            cpu.psc_strict()
+            with self.assertRaisesRegex(CoreFault, "PSC1 module 1 in state 0"):
+                cpu.run(100)
+        with self.machine(["nop 8"] * 4 + program) as cpu:                 # the transition takes 16 cycles
+            self.put(cpu, 0x01e27a04, 3); self.put(cpu, 0x01e27120, 1)    # module 1 to Enable, then GO
+            cpu.set_register("a4", 0x01e00401); cpu.set_register("a6", 0x01c2201c)
+            cpu.psc_strict()
+            self.assertEqual(cpu.run(200)["status"], "returned")
+            self.assertEqual(cpu.psc_violations()[0], [])
+
     def test_mmio_capture_keeps_whole_sequences_folds_polls_and_filters(self):
         program = ["stw .D1T1 a5,*a4", "ldw .D1T1 *a4,a6", "nop 4", "ldw .D1T1 *a4,a6", "nop 4", "ldw .D1T1 *a4,a6",
                    "nop 4", "stw .D1T1 a5,*a7", "stw .D1T1 a8,*a4", "ldw .D1T1 *a4,a6", "nop 4"]
@@ -673,6 +698,8 @@ class Board(unittest.TestCase):
             for reg, value in ((4, 0xffffffff), (8, 0x180f0), (12, 0x110), (24, 3), (28, 0xf)):
                 self.put(cpu, base + side + reg, value)
         self.put(cpu, base + 0xb0, 0x80)
+        for reg in (0x70, 0x74, 0xb4):                                   # ACLKRCTL, AHCLKRCTL, AHCLKXCTL: the stock writes 0
+            self.put(cpu, base + reg, 0)
         self.put(cpu, base + 0x1b4, 1)
         self.put(cpu, base + 0x1b8, 2)
         self.put(cpu, base + 0x14, 0x2000)
@@ -1635,10 +1662,10 @@ class Board(unittest.TestCase):
             self.put(cpu, 0x01c14038, 0)
             self.put(cpu, 0x01c1403c, 0)
             self.put(cpu, 0x01c14170, 123)
-            self.assertEqual(self.get(cpu, 0x01c14170), 0)
+            self.assertEqual(self.get(cpu, 0x01c14170), 0xffffffff)      # SUSPSRC's reset value, unchanged while locked
             self.put(cpu, 0x01c14038, 0x83e70b13)
             self.put(cpu, 0x01c14170, 123)
-            self.assertEqual(self.get(cpu, 0x01c14170), 0)
+            self.assertEqual(self.get(cpu, 0x01c14170), 0xffffffff)
             self.put(cpu, 0x01c1403c, 0x95a4f1e0)
             self.put(cpu, 0x01c14170, 123)
             self.assertEqual(self.get(cpu, 0x01c14170), 123)

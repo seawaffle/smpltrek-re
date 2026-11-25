@@ -13,6 +13,15 @@ docs/stock-register-writes/:
   mmcsd.csv          MMCSD0, PINMUX10, PSC0 module 5, EDMA channels 16/17 and their PaRAM sets
   sd-commands.csv    every SD command the card saw, with argument and response
 
+Options for other captures:
+- --raw FILE: any capture in stock_register_capture.py's raw format, such as another firmware's.
+- --all-runs: emit every run and phase, each under its own scenario name. By default only main and common runs are listed, plus the card_reader phase of the card-reader run.
+- --symbols FILE: a {name: address} JSON naming that firmware's PCs, in place of the stock's symbol file.
+- --product: picks the stock product's symbols.
+- --collapse-sd: summarises runs of SD data commands.
+
+Rows fold by (PC, register address, register name with its INDEX, direction, value). So a write under another INDEX, which reaches another endpoint's register at the same address, keeps its own row.
+
 Columns (CSV): order, run, phase, step, access (write / read / poll), address, register, width, value, before,
 reset, changed, count, pc, function, evidence.
 - `before` is the register's last value seen on the bus in this run (written, or read back), else its reset
@@ -50,25 +59,40 @@ OWNER_CHANNELS = {"mcasp-edma": {0, 1}, "mmcsd": {16, 17}, "i2c0": {24, 25, 26}}
 CODEC_I2C = 0x18
 
 
-def load_symbols():
-    data = json.loads((ROOT / "symbols/smpltrek-3.2.174.json").read_text())
+SYMBOLS = {"smpltrek": "smpltrek-3.2.174", "lofi12": "lofi-12xt-1.5.205", "cydrums": "cydrums-1.1.84"}
+
+
+def load_symbol_file(path):
+    """A {name: address} JSON (another firmware's symbols): every address is a possible function start."""
+    names = {int(address, 16) if isinstance(address, str) else int(address): name
+             for name, address in json.loads(Path(path).read_text()).items()}
+    return names, sorted(names), False
+
+
+def load_symbols(product="smpltrek"):
+    """({start: name}, sorted starts, whether the starts are complete). Only SmplTrek has a list of every
+    function start (work/smpltrek-function-starts.pkl); for the others the named functions are the only starts."""
+    data = json.loads((ROOT / "symbols" / f"{SYMBOLS[product]}.json").read_text())
     names = {}
     for entry in data["symbols"]:
         address = entry["address"]
         address = int(address, 16) if isinstance(address, str) else address
         if entry.get("kind") == "function":
             names[address] = entry["name"]
+    if product != "smpltrek":
+        return names, sorted(names), False
     starts = sorted(pickle.loads((WORK.parent / "smpltrek-function-starts.pkl").read_bytes())
                     if (WORK.parent / "smpltrek-function-starts.pkl").exists() else
                     pickle.loads((ROOT / "work/smpltrek-function-starts.pkl").read_bytes()))
-    return names, sorted(set(starts) | set(names))   # the starts list misses some named functions
+    return names, sorted(set(starts) | set(names)), True   # the starts list misses some named functions
 
 
 class Tables:
-    def __init__(self, register_map):
+    def __init__(self, register_map, product="smpltrek", symbols=None, all_runs=False):
         self.soc = {int(k, 16): v for k, v in register_map["soc"].items()}
         self.codec = register_map["codec"]
-        self.names, self.starts = load_symbols()
+        self.names, self.starts, self.complete = load_symbol_file(symbols) if symbols else load_symbols(product)
+        self.all_runs = all_runs
 
     def function(self, pc):
         if pc == DMA_PC:
@@ -77,6 +101,8 @@ class Tables:
         if at < 0:
             return ""
         start = self.starts[at]
+        if not self.complete:   # the nearest named function below: the PC may lie in an unnamed one after it
+            return f"{self.names[start]}+{pc - start:#x}?"
         return self.names.get(start, f"fn_{start:08X}")
 
     def registers(self, address, size):
@@ -166,11 +192,12 @@ def build(tables, runs):
         param_owner = {0: "mcasp-edma", 1: "mcasp-edma", 16: "mmcsd", 17: "mmcsd"}
         recent_psc = {}      # PSC base -> owner of the last module write
         index = 0            # USB0 INDEX: which endpoint 0x410-0x41F and the FIFO size/address registers mean
+        mounted = False      # the card's first mount is done: later card traffic is summarised
         for phase in run["phases"]:
             name = phase["name"]
             # The card-reader run repeats the main run's opening phases: they update the tracked state (values
             # seen, INDEX, PaRAM owners) but are not listed again.
-            emit = run["scenario"] == "main" or name == "card_reader"
+            emit = tables.all_runs or run["scenario"] in ("main", "common") or name == "card_reader"
             steps = phase.get("steps", [])
             # The MMC/SD detail stops after the first mount (the card's set-up and its first block read); the file
             # reads that follow are summarised, and listed command by command in sd-commands.csv.
@@ -178,6 +205,10 @@ def build(tables, runs):
             first_read = next((n for n, c in enumerate(sd) if c["command"] in ("CMD17", "CMD18") and n and
                                any(x["command"] == "CMD13" for x in sd[:n])), None)
             mmc_until = sd[first_read + 1]["cycles"] if first_read is not None and first_read + 1 < len(sd) else None
+            rest = len(sd) - first_read - 2 if mmc_until is not None else len(sd)
+            if mounted and not any(c["command"] == "CMD0" for c in sd):
+                mmc_until = -1   # a phase with no card set-up of its own: all of its card traffic is summarised
+            mounted = mounted or mmc_until is not None
             mmc_cut = False
             folded = collections.defaultdict(dict)   # table -> key -> row (later identical accesses)
             for access in phase["mmio"]:
@@ -204,11 +235,11 @@ def build(tables, runs):
                             param_owner[(link - 0x4000) // 32] = next(iter(owners))
                     if mmc_until is not None and access["cycles"] > mmc_until and "mmcsd" in owners:
                         owners = owners - {"mmcsd"}
-                        if not mmc_cut:
+                        if not mmc_cut and emit:
                             mmc_cut = True
-                            rest = len(sd) - first_read - 2
                             rows["mmcsd"].append(dict(run=run["scenario"], phase=name, access="summary",
-                                                      register=f"(the remaining {rest} SD commands of this phase: file "
+                                                      register=f"(the {'remaining ' if mmc_until >= 0 else ''}{rest} SD "
+                                                      "commands of this phase: file "
                                                       "reads and writes, in sd-commands.csv; their register sequence "
                                                       "repeats the first block read's)", evidence="emulated"))
                     if not owners or not emit:
@@ -237,7 +268,9 @@ def build(tables, runs):
                     seen[register] = value if access["write"] else (before or 0) & ~mask | in_register
                     for table in owners:
                         target = rows[table]
-                        key = (access["pc"], register, access["write"], in_register, mask)
+                        # The label carries INDEX for the indexed registers: the same address under another INDEX is
+                        # another endpoint's register and must not fold into the first one's row.
+                        key = (access["pc"], register, label, access["write"], in_register, mask)
                         if register in DATA:
                             last = target[-1] if target else None
                             if last and last["phase"] == name and last["address"] == row["address"] and \
@@ -259,7 +292,7 @@ def codec_rows(tables, runs):
     for run in runs:
         shadow = {}
         for phase in run["phases"]:
-            if run["scenario"] != "main" and phase["name"] != "card_reader":
+            if not tables.all_runs and run["scenario"] == "card_reader" and phase["name"] != "card_reader":
                 continue
             for write in phase["codec"]:
                 key = f'{write["page"]}/{write["register"]}'
@@ -286,13 +319,39 @@ def codec_rows(tables, runs):
     return out
 
 
-def sd_rows(runs):
+DATA_COMMANDS = {"CMD17", "CMD18", "CMD24", "CMD25", "CMD12", "CMD13"}
+
+
+def sd_rows(runs, collapse=False, all_runs=False):
+    """Every SD command; with `collapse`, a run of more than four data commands (block reads and writes, CMD12,
+    CMD13) becomes one summary row with the commands counted and the argument range."""
     out = []
     for run in runs:
         for phase in run["phases"]:
-            if run["scenario"] != "main" and phase["name"] != "card_reader":
+            if not all_runs and run["scenario"] == "card_reader" and phase["name"] != "card_reader":
                 continue
-            for n, command in enumerate(phase["sd"]):
+            commands, n = phase["sd"], 0
+            while collapse and n < len(commands):
+                end = n
+                while end < len(commands) and commands[end]["command"] in DATA_COMMANDS:
+                    end += 1
+                if end - n > 4:
+                    counted = collections.Counter(c["command"] for c in commands[n:end])
+                    arguments = [c["argument"] for c in commands[n:end] if c["command"] != "CMD13"]
+                    out.append(dict(run=run["scenario"], phase=phase["name"], index_in_phase=f"{n}-{end - 1}",
+                                    command="data: " + ", ".join(f"{k} x{v}" for k, v in sorted(counted.items())),
+                                    argument=f"{min(arguments):#010x}..{max(arguments):#010x}" if arguments else "",
+                                    cycles=commands[n]["cycles"], evidence="emulated (card model)"))
+                    n = end
+                    continue
+                command = commands[n]
+                out.append(dict(run=run["scenario"], phase=phase["name"], index_in_phase=n, command=command["command"],
+                                argument=f'{command["argument"]:#010x}', answered=command["answered"],
+                                response=f'{command["response"]:#010x}' if command["answered"] else "",
+                                long_response=command["long"], card_state_after=command["state"], cycles=command["cycles"],
+                                evidence="emulated (card model)"))
+                n += 1
+            for n, command in enumerate([] if collapse else phase["sd"]):
                 out.append(dict(run=run["scenario"], phase=phase["name"], index_in_phase=n, command=command["command"],
                                 argument=f'{command["argument"]:#010x}', answered=command["answered"],
                                 response=f'{command["response"]:#010x}' if command["answered"] else "",
@@ -314,9 +373,15 @@ def main(argv=None):
     parser.add_argument("--raw", type=Path, default=WORK / "register-capture" / "raw.json")
     parser.add_argument("--map", type=Path, default=HERE / "register_map.json")
     parser.add_argument("--output", type=Path, default=ROOT / "docs" / "stock-register-writes")
+    parser.add_argument("--product", choices=tuple(SYMBOLS), default="smpltrek", help="whose symbols name the PCs")
+    parser.add_argument("--collapse-sd", action="store_true", help="summarise runs of SD data commands")
+    parser.add_argument("--all-runs", action="store_true", help="every run and phase, each under its own scenario name "
+                        "(by default: main and common runs, and only the card_reader phase of the card-reader run)")
+    parser.add_argument("--symbols", type=Path, help="a {name: address} JSON naming another firmware's PCs "
+                        "(nearest symbol below the PC, plus offset, marked ?) instead of the stock's symbols")
     args = parser.parse_args(argv)
     runs = json.loads(args.raw.read_text())
-    tables = Tables(json.loads(args.map.read_text()))
+    tables = Tables(json.loads(args.map.read_text()), args.product, args.symbols, args.all_runs)
     args.output.mkdir(parents=True, exist_ok=True)
     columns = ["order", "run", "phase", "step", "access", "address", "register", "width", "value", "before", "reset",
                "changed", "count", "pc", "function", "evidence"]
@@ -324,10 +389,10 @@ def main(argv=None):
     for table in ("usb0", "i2c0", "mcasp-edma", "mmcsd"):
         write_csv(args.output / f"{table}.csv", built[table], columns)
         print(f"{table}.csv: {len(built[table])} rows")
-    codec = codec_rows(tables, runs)
+    codec = codec_rows(tables, runs)  # honours tables.all_runs
     write_csv(args.output / "codec.csv", codec, ["order", "run", "phase", "access", "page", "register", "name", "value",
                                                  "before", "reset", "changed", "cycles", "evidence"])
-    sd = sd_rows(runs)
+    sd = sd_rows(runs, collapse=args.collapse_sd, all_runs=args.all_runs)
     write_csv(args.output / "sd-commands.csv", sd, ["order", "run", "phase", "index_in_phase", "command", "argument",
                                                      "answered", "response", "long_response", "card_state_after", "cycles",
                                                      "evidence"])

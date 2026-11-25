@@ -122,6 +122,9 @@ class CPU:
             "sd_command": (C.c_int, [C.c_void_p, C.c_uint32, C.POINTER(C.c_uint64), C.POINTER(C.c_uint32)]),
             "mmio_count": (C.c_uint64, [C.c_void_p]),
             "mmio_access": (C.c_int, [C.c_void_p, C.c_uint64, C.POINTER(C.c_uint64), C.POINTER(C.c_uint32)]),
+            "psc_violations": (C.c_int, [C.c_void_p, C.c_uint64, C.POINTER(C.c_uint64), C.c_uint32, C.POINTER(C.c_uint64)]),
+            "psc_strict": (C.c_int, [C.c_void_p, C.c_uint32]),
+            "psc_modules": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint32)]),
             "capture_start": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint32), C.c_uint32, C.c_uint32, C.c_uint64]),
             "capture_stop": (C.c_int, [C.c_void_p]),
             "capture_take": (C.c_int, [C.c_void_p, C.POINTER(C.c_uint64), C.c_uint32, C.POINTER(C.c_uint64)]),
@@ -1012,6 +1015,33 @@ class CPU:
             result.append({"sequence": sequence, "cycles": cycle.value, "pc": fields[0], "address": fields[1],
                            "value": fields[2], "size": fields[3], "write": bool(fields[4])})
         return result
+
+    PSC_STATES = {0: "SwRstDisable", 1: "SyncReset", 2: "Disable", 3: "Enable"}
+
+    def psc_violations(self, since=0):
+        """Guest or DMA accesses to a peripheral whose PSC module was not enabled (MDSTAT state other than Enable),
+        in order from sequence `since` on: (rows, next_since). Each row: sequence, cycles, pc (0xfffffff0 for DMA),
+        address, write, psc, module, state (its name). Peripherals with no PSC module (I2C0, the timers, SYSCFG)
+        are never flagged. Recording is always on and never stops the guest unless psc_strict(True)."""
+        return self._log(self.lib.c6_psc_violations, since, 7, lambda n, r: dict(
+            sequence=n, cycles=r[0], pc=r[1], address=r[2], write=bool(r[3]), psc=r[4], module=r[5],
+            state=self.PSC_STATES.get(r[6], str(r[6]))), "PSC violation")
+
+    def psc_strict(self, enabled=True):
+        """Fault on the first access to a peripheral whose PSC module is not enabled (off by default)."""
+        self.ensure_open()
+        self.checked(self.lib.c6_psc_strict(self.handle, int(bool(enabled))))
+
+    def psc_modules(self):
+        """Every PSC module: psc, module, mdctl_next and state (names), and assumed: True where the state the board
+        started with is an assumed bootloader hand-off (DDR, and GPIO with the hand-off) rather than SPRUH79C's
+        default. What the stock bootloader really leaves is not known."""
+        self.ensure_open()
+        rows = (C.c_uint32 * (3 * 64))()
+        self.checked(self.lib.c6_psc_modules(self.handle, rows))
+        return [dict(psc=n // 32, module=n % 32, mdctl_next=self.PSC_STATES.get(rows[3 * n] & 7, str(rows[3 * n] & 7)),
+                     state=self.PSC_STATES.get(rows[3 * n + 1] & 63, str(rows[3 * n + 1] & 63)), assumed=bool(rows[3 * n + 2]))
+                for n in range(64) if n >= 32 or n < 16]
 
     def capture_start(self, ranges, writes_only=False, limit=1 << 22):
         """Capture every MMIO access to the given address ranges, [(start, end), ...] with end exclusive, for
