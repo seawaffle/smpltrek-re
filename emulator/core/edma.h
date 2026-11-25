@@ -7,7 +7,7 @@
 
 // C6748 CC0 configuration and A/AB-synchronized increment-address transfers.
 class Edma {
-    std::unordered_map<uint32_t, uint32_t> registers;
+    std::unordered_map<uint32_t, uint32_t> registers{{0x620, 0x1010}}; // QWMTHRA resets to 0x1010 (SPRUH79C 16.4)
     std::array<std::array<uint32_t, 8>, 128> params{};
     uint32_t manual = 0;
     bool irq_high = false;

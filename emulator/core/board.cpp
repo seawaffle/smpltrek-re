@@ -56,6 +56,7 @@ void Board::enable(bool gpio_handoff) {
     panel = PanelStream{}; panel.levels[15] = 12000;
     keys_down = 0;
     enabled = true; accesses = 0; pending_interrupts = 0; registers.clear(); timers = {};
+    psc_violations.clear(); psc_logged = 0; psc_strict = false;
     deadline = 0; eager_polling = false;
     psc_deadline.fill(UINT64_MAX);
     edma = Edma{};
@@ -154,10 +155,13 @@ void Board::enable(bool gpio_handoff) {
     for (unsigned index = 0; index < PSC.size(); index++) {
         uint32_t base = PSC[index], count = index ? 32 : 16;
         registers[base + 0x200] = registers[base + 0x204] = 1;
-        registers[base + 0x300] = registers[base + 0x304] = 1;
+        registers[base + 0x300] = registers[base + 0x304] = 0x001ff101; // PDCTLn reset (SPRUH79C 8.6.13/14)
         for (unsigned module = 0; module < count; module++) {
             // Default enabled interconnect/DSP/RAM plus DDR inherited from the loader.
             bool on = index ? module >= 24 || module == 6 || (gpio_handoff && module == 3) : module == 11 || module == 12 || module == 15;
+            // DDR (PSC1 6) and, with the GPIO hand-off, GPIO (PSC1 3) are the bootloader's assumed state; the rest
+            // are SPRUH79C's defaults. What BOOT 1.0.17 leaves on is not traced (UNKNOWNS.md, "Clocks").
+            psc_assumed[index][module] = index == 1 && (module == 6 || (gpio_handoff && module == 3));
             registers[base + 0xa00 + module * 4] = (on ? 3 : 0) | (index == 0 && module == 15 ? 0x100 : 0);
             registers[base + 0x800 + module * 4] = 0xb00 | (on ? 0x1403 : 0);
         }
@@ -173,6 +177,11 @@ void Board::enable(bool gpio_handoff) {
     // L2 all SRAM (bits 16 and 24 are read-only identity), L1P and L1D fully cache, and these MAR bits.
     registers[CACHE] = 0x01010000; registers[CACHE + 0x20] = 4; registers[CACHE + 0x40] = 3;
     for (unsigned index : {17, 128, 192, 193, 194, 195, 199}) registers[CACHE + 0x8000 + index * 4] = 1;
+    // SPRUH79C reset values of SYSCFG0 registers the model only stores.
+    registers[SYSCFG + 0x110] = 0x44442222; registers[SYSCFG + 0x114] = 0x44440000; registers[SYSCFG + 0x118] = 0x54604404;
+    registers[SYSCFG + 0x170] = 0xffffffff;                                   // SUSPSRC
+    registers[SYSCFG + 0x188] = registers[SYSCFG + 0x18c] = 0xff00;           // CFGCHIP3, CFGCHIP4
+    // KICK0R/KICK1R hold the unlock keys: the bootloader's assumed hand-off (its SYSCFG writes are not traced).
     registers[SYSCFG + 0x38] = 0x83e70b13;
     registers[SYSCFG + 0x3c] = 0x95a4f1e0;
     registers[SYSCFG1 + 0xc] = 0xffffffff;
@@ -658,8 +667,38 @@ void Board::write_word(uint32_t address, uint32_t value, uint64_t cycle) {
     if (0x8000 <= off && off < 0x8400 && !(off & 3)) { registers[address] = value & 9; return; }
     throw unknown(address);
 }
+// The PSC module that gates a peripheral's address (SPRUH79C Tables 8-1, 8-2), as (psc << 8 | module), or -1 for a
+// peripheral with no module (I2C0, Timer64P0-P3, SYSCFG, the PSCs, the interrupt and cache controllers).
+static int psc_module(uint32_t address) {
+    struct Range { uint32_t start, end; int module; };
+    static constexpr Range ranges[] = {
+        {0x01c00000, 0x01c08000, 0x000}, {0x01c08000, 0x01c08400, 0x001}, {0x01c08400, 0x01c08800, 0x002},
+        {0x01c41000, 0x01c41080, 0x004}, {0x01c40000, 0x01c40078, 0x005}, {0x01c42000, 0x01c42038, 0x009},
+        {0x01e00000, 0x01e10000, 0x101}, {0x01e26000, 0x01e260d8, 0x103}, {DDRC, DDRC + 0x1000, 0x106},
+        {0x01d00000, 0x01d03000, 0x107}, {0x01f0e000, 0x01f0e080, 0x10a}, {0x01e28000, 0x01e28060, 0x10b},
+        {0x01d0c000, 0x01d0c038, 0x10c}, {0x01d0d000, 0x01d0d038, 0x10d},
+    };
+    for (const auto &r : ranges) if (address >= r.start && address < r.end) return r.module;
+    return -1;
+}
+void Board::psc_check(uint32_t address, bool write, uint64_t cycle, uint32_t pc) {
+    int found = psc_module(address);
+    if (found < 0) return;
+    unsigned index = unsigned(found) >> 8, module = unsigned(found) & 0xff;
+    uint32_t state = registers[PSC[index] + 0x800 + module * 4] & 63;
+    if (state == 3) return;
+    psc_violations.push_back({cycle, pc, address, uint32_t(write), index, module, state}); psc_logged++;
+    if (psc_violations.size() > PSC_LOG) psc_violations.pop_front();
+    if (psc_strict) {
+        char text[160];
+        std::snprintf(text, sizeof text, "%s of 0x%08x with PSC%u module %u in state %u (not Enable)",
+                      write ? "write" : "read", address, index, module, state);
+        throw std::runtime_error(text);
+    }
+}
 uint32_t Board::read(uint32_t address, uint32_t size, uint64_t cycle, uint32_t pc, bool trace) {
     if (!contains(address, size) || (address & 3) + size > 4) throw unknown(address);
+    if (trace) psc_check(address, false, cycle, pc);
     InvalidateDeadline changed{deadline};
     deadline = 0; // reads can consume FIFOs, acknowledge flags, or generate DMA requests
     if (address == USB0 + 0x80c || address == USB0 + 0x84c) {
@@ -709,6 +748,7 @@ uint32_t Board::read(uint32_t address, uint32_t size, uint64_t cycle, uint32_t p
 }
 void Board::write(uint32_t address, uint32_t value, uint32_t size, uint64_t cycle, uint32_t pc, bool trace) {
     if (!contains(address, size) || (address & 3) + size > 4) throw unknown(address);
+    if (trace) psc_check(address, true, cycle, pc);
     InvalidateDeadline changed{deadline};
     deadline = 0;
     if (address == USB0 + 0x808 || address == USB0 + 0x848) {

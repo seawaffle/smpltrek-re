@@ -278,6 +278,15 @@ int c6_sd_command(void *machine, uint32_t index, uint64_t *cycle, uint32_t *fiel
 int c6_sd_log(void *machine, uint64_t since, uint64_t *rows, uint32_t capacity, uint64_t *fields);
 uint64_t c6_mmio_count(void *machine);
 int c6_mmio_access(void *machine, uint64_t sequence, uint64_t *cycle, uint32_t *fields);
+/* Accesses (guest or DMA, not the host's) to a peripheral whose PSC module is not in the Enable state, from
+   sequence `since` on, latest 65536 kept: rows[7 per row] = cycle, PC, address, 1 for a write, PSC (0/1), module,
+   MDSTAT state (0 SwRstDisable, 1 SyncReset, 2 Disable). fields[4] as c6_codec_log. Peripherals with no module
+   (I2C0, the timers, SYSCFG) are never flagged. Not fatal unless c6_psc_strict(1): then the first faults. */
+int c6_psc_violations(void *machine, uint64_t since, uint64_t *rows, uint32_t capacity, uint64_t *fields);
+int c6_psc_strict(void *machine, uint32_t enabled);
+/* rows[3 x 64]: for PSC0 modules 0-31 then PSC1 modules 0-31: MDCTL, MDSTAT, 1 if the state the board started with
+   is an assumed bootloader hand-off rather than SPRUH79C's reset default (PSC0 has modules 0-15 only). */
+int c6_psc_modules(void *machine, uint32_t *rows);
 /* Whole-sequence MMIO capture. Start clears any earlier capture: `ranges` holds `count` (1..64) pairs
    [start, end); with `writes_only` reads are skipped, otherwise identical consecutive reads (same PC,
    address, size and value: a poll) fold into one row with a repeat count. At most `limit` rows wait to

@@ -13,6 +13,7 @@ class MmcSd {
     bool pending = false, no_timeout = false, irq = false;
     bool data_active = false, data_crc = false;
     bool dma_enabled = false;
+    bool fifo_used = false; // MMCST1's FIFOEMP and DXEMP read 0 until MMCFIFOCTL is written or data moves
     uint32_t dma_remaining = 0;
     uint32_t data_position = 0;
     std::deque<uint8_t> fifo;

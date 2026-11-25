@@ -37,7 +37,7 @@ void MmcSd::reset() {
     regs.fill(0); regs[1] = 255; regs[2] = DXRDY;
     regs[0x1c / 4] = 512; regs[0x24 / 4] = 65535;
     last_cycle = fraction = clocks_left = 0;
-    pending = no_timeout = irq = false;
+    pending = no_timeout = irq = false; fifo_used = false;
     data_active = data_crc = false; data_position = 0; fifo.clear(); reply = {}; card = {};
     dma_enabled = false; dma_remaining = 0;
 }
@@ -135,7 +135,7 @@ void MmcSd::complete_command() {
             throw std::runtime_error("MMCSD FIFO direction does not match SD command");
         if (((regs[0] & 4) ? 4u : 1u) != card.width)
             throw std::runtime_error("MMCSD and card bus widths do not match");
-        data_active = true; data_crc = false; data_position = 0;
+        data_active = true; data_crc = false; data_position = 0; fifo_used = true;
         regs[0x24 / 4] = blocks; ready(); resume_data();
     }
     notify();
@@ -165,7 +165,7 @@ uint32_t MmcSd::read(uint32_t offset, uint32_t size, uint64_t cycle) {
     advance(cycle);
     uint32_t word = offset & ~3u, value;
     if (word > 0x74 || (offset & 3) + size > 4) throw std::runtime_error("unimplemented MMCSD register");
-    if (word == 0xc) value = (fifo.empty() ? 0x24 : 0) | (fifo.size() == 64 ? 8 : 0) |
+    if (word == 0xc) value = (fifo.empty() && fifo_used ? 0x24 : 0) | (fifo.size() == 64 ? 8 : 0) |
         (!(regs[1] & 0x100) || !clock_running() || (data_active && !clocks_left) ? 2 : 0) | (card.state == 7 ? 1 : 0);
     else if (word == 0x28) {
         if ((offset & 3) || size != 4 - ((regs[0x74 / 4] >> 3) & 3) || (regs[0x74 / 4] & 3) || fifo.size() < size)
@@ -198,6 +198,7 @@ void MmcSd::write(uint32_t offset, uint32_t value, uint32_t size, uint64_t cycle
     }
     uint32_t shift = (offset & 3) * 8, mask = size == 4 ? 0xffffffff : ((1u << (size * 8)) - 1) << shift;
     if ((offset & 3) + size > 4) throw std::runtime_error("invalid MMCSD access width");
+    if (word == 0x74) fifo_used = true;
     value = (regs[word / 4] & ~mask) | ((value << shift) & mask);
     if (value & ~allowed) throw std::runtime_error("unsupported MMCSD register bits");
     if (word == 0 && (value & 0x6c0)) throw std::runtime_error("MMCSD endian/edge modes are not implemented");

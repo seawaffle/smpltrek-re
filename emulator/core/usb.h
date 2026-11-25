@@ -113,9 +113,10 @@ public:
 private:
     enum class Stage : uint8_t { Idle, Tx, Rx, StatusIn, StatusOut };
     static constexpr uint8_t POWER_RESET = 0x20; // HSENAB
-    uint32_t control = 0, source = 0, mask = 0, phy_control = 0;
-    uint16_t tx_enable = 1, rx_enable = 0, intrtx = 0, intrrx = 0;
-    uint8_t faddr = 0, address = 0, power = POWER_RESET, usb_enable = 0, intrusb = 0, index = 0;
+    // CFGCHIP2 resets to 0xEF00 (SPRUH79C 10.5.x): PHY and OTG powered down, held in reset, USB0OTGMODE 3.
+    uint32_t control = 0, source = 0, mask = 0, phy_control = 0xef00;
+    uint16_t tx_enable = 0x1f, rx_enable = 0x1e, intrtx = 0, intrrx = 0; // SPRUH79C resets, as core_reset()
+    uint8_t faddr = 0, address = 0, power = POWER_RESET, usb_enable = 0x06, intrusb = 0, index = 0;
     bool in_service = false, core_line = false, faddr_pending = false;
     // Endpoint 0: one 64-byte FIFO at RAM address 0 for both directions.
     Stage stage = Stage::Idle;
