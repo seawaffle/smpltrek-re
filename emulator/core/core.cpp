@@ -3063,7 +3063,10 @@ int c6_usb_host_stats(void *handle, uint64_t *fields) {
 int c6_usb_iso_out(void *handle, uint32_t endpoint, const uint8_t *data, const uint32_t *sizes, uint32_t count) {
     auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
         if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
-        for (uint32_t i = 0; i < count; i++) if (sizes[i] > 1023) throw std::runtime_error("a full-speed isochronous packet is at most 1023 bytes");
+        for (uint32_t i = 0; i < count; i++)
+            if (sizes[i] > m->board.usb.iso_packet_limit())
+                throw std::runtime_error(m->board.usb.iso_packet_limit() > 1023 ? "a high-speed isochronous packet is at most 1024 bytes"
+                                                                                 : "a full-speed isochronous packet is at most 1023 bytes");
         for (uint32_t i = 0; i < count; data += sizes[i], i++)
             m->board.usb.iso_queue(endpoint, std::vector<uint8_t>(data, data + sizes[i]), m->cycles);
     });
@@ -3072,6 +3075,12 @@ int c6_usb_iso_in(void *handle, uint32_t endpoint, uint32_t frames, uint32_t max
     auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
         if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
         m->board.usb.iso_request(endpoint, frames, max_packet, short_below, m->cycles);
+    });
+}
+int c6_usb_iso_interval(void *handle, uint32_t address, uint32_t microframes) {
+    auto m = static_cast<Machine *>(handle); return guarded(m, [&] {
+        if (!m->board.enabled) throw std::runtime_error("the USB host needs the board");
+        m->board.usb.iso_interval(address, microframes, m->cycles);
     });
 }
 int c6_usb_iso_stop(void *handle, uint32_t address) {
@@ -3089,7 +3098,8 @@ int c6_usb_iso_read(void *handle, uint32_t endpoint, uint64_t *rows, uint32_t ro
         const auto &waiting = usb.iso(endpoint | 0x80).in;
         while (copied < row_capacity && !waiting.empty() && bytes + waiting.front().data.size() <= capacity) {
             Usb::IsoPacket packet; usb.iso_take(endpoint, packet);
-            rows[copied * 3] = uint64_t(packet.status) << 16 | packet.frame; rows[copied * 3 + 1] = packet.cycle;
+            rows[copied * 3] = uint64_t(packet.high_speed) << 23 | uint64_t(packet.microframe) << 20 | uint64_t(packet.status) << 16 | packet.frame;
+            rows[copied * 3 + 1] = packet.cycle;
             rows[copied * 3 + 2] = packet.data.size();
             std::copy(packet.data.begin(), packet.data.end(), data + bytes);
             bytes += packet.data.size(); copied++;

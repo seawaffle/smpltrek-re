@@ -5,9 +5,6 @@
 
 namespace {
 constexpr uint32_t IRQ_BITS = 0x01ff1e1f;
-// Packet lengths in bit times: sync and PID, the fields, EOP; then the gap before the next packet.
-constexpr uint64_t TOKEN = 35, HANDSHAKE = 19, GAP = 4;
-constexpr uint64_t data_bits(size_t size) { return 35 + 8 * uint64_t(size); }
 std::runtime_error unsupported(uint32_t offset) {
     char text[96]; std::snprintf(text, sizeof text, "unimplemented USB0 access at 0x%08x", 0x01e00000 + offset);
     return std::runtime_error(text);
@@ -377,8 +374,10 @@ void Usb::iso_next(uint64_t free, unsigned slot) {
     for (; slot < 8; slot++) {
         unsigned n = slot / 2 + 1;
         if (slot & 1 ? host.iso_in[n].frames == 0 : host.iso_out[n].out.empty()) continue;
+        if (host.high_speed && host.microframes % (slot & 1 ? host.iso_in[n] : host.iso_out[n]).interval) continue;
         host.iso_slot = uint8_t(slot);
-        host.iso_due = free + (slot & 1 ? GAP + TOKEN : GAP + TOKEN + GAP + data_bits(host.iso_out[n].out.front().size())) * BIT;
+        host.iso_due = free + wire(slot & 1 ? gap_bits() + token_bits() :
+            gap_bits() + token_bits() + gap_bits() + data_bits(host.iso_out[n].out.front().size()));
         return;
     }
     host.iso_due = UINT64_MAX;
@@ -399,18 +398,18 @@ void Usb::iso_step(uint64_t at) {
     }
     auto &stream = host.iso_in[n];
     auto record = [&](uint8_t status, std::vector<uint8_t> data) {
-        stream.in.push_back({host.frame, status, at, std::move(data)});
+        stream.in.push_back({host.frame, status, host.high_speed ? host.microframe : uint8_t(0), host.high_speed, at, std::move(data)});
         if (stream.in.size() > 65536) { stream.in.pop_front(); stream.dropped++; }
     };
     if (!host.iso_sending) {
         stream.frames--; stream.done++;
         if (!iso_in_token(n, host.iso_size, host.iso_loaded)) {
             stream.errors++; record(2, {});
-            iso_next(at + (GAP + HANDSHAKE) * BIT, slot + 1); // the host waits out the turn-around
+            iso_next(at + wire(gap_bits() + handshake_bits()), slot + 1); // the host waits out the turn-around
             return;
         }
         host.iso_sending = true;
-        host.iso_due = at + (GAP + data_bits(host.iso_size)) * BIT;
+        host.iso_due = at + wire(gap_bits() + data_bits(host.iso_size));
         return;
     }
     std::vector<uint8_t> data;
@@ -432,7 +431,7 @@ void Usb::finish(uint8_t status, uint64_t at) {
     host.finished.push_back(std::move(done));
     if (host.finished.size() > 256) host.finished.pop_front();
     host.parked = host.committing = false; host.transfer_due = UINT64_MAX;
-    host.free = std::max(host.free, at + GAP * BIT);
+    host.free = std::max(host.free, at + wire(gap_bits()));
     if (!host.queue.empty() && host.port == Port::Enabled) host_next(host.free);
 }
 // Schedules the front transfer's next transaction on a bus that is free from `free`: the cycle its
@@ -444,7 +443,8 @@ void Usb::host_next(uint64_t free) {
         (t.kind == CONTROL && t.stage == 3 && !((t.setup[0] & 0x80) && (t.setup[6] | t.setup[7])));
     size_t size = t.kind == CONTROL && t.stage <= 1 ? 8 : t.kind == CONTROL && t.stage == 3 ? 0 :
         std::min<size_t>(t.packet, t.data.size() - t.offset);
-    host.transfer_due = free + (in ? TOKEN + GAP + HANDSHAKE : TOKEN + GAP + data_bits(size) + GAP + HANDSHAKE) * BIT;
+    host.transfer_due = free + wire(in ? token_bits() + gap_bits() + handshake_bits() :
+        token_bits() + gap_bits() + data_bits(size) + gap_bits() + handshake_bits());
 }
 void Usb::host_nak(uint64_t at, uint64_t period) {
     host.queue.front().naks++; host.naks++;
@@ -472,17 +472,17 @@ void Usb::host_attempt(uint64_t at) {
         if (!host.committing) {
             size_t size = 0;
             Handshake answer = in_response(n, size);
-            if (answer == Handshake::Nak) { host_nak(at, (TOKEN + GAP + HANDSHAKE + GAP) * BIT); return; }
+            if (answer == Handshake::Nak) { host_nak(at, wire(token_bits() + gap_bits() + handshake_bits() + gap_bits())); return; }
             if (answer == Handshake::Ack) { // Data follows the token; the host's ACK ends the transaction.
                 host.committing = true;
-                host.transfer_due = at + (data_bits(size) + GAP) * BIT;
+                host.transfer_due = at + wire(data_bits(size) + gap_bits());
                 return;
             }
         }
         host.committing = false;
         std::vector<uint8_t> packet; bool data1 = true;
         switch (token_in(n, packet, data1)) {
-        case Handshake::Nak: host_nak(at, (TOKEN + GAP + HANDSHAKE + GAP) * BIT); return;
+        case Handshake::Nak: host_nak(at, wire(token_bits() + gap_bits() + handshake_bits() + gap_bits())); return;
         case Handshake::Stall: host.stalls++; finish(STALLED, at); return;
         case Handshake::None: host.errors++; finish(FAILED, at); return;
         default: break;
@@ -491,35 +491,35 @@ void Usb::host_attempt(uint64_t at) {
             if (!packet.empty()) { host.errors++; finish(FAILED, at); return; }
         } else {
             if (!control) {
-                if (data1 != host.in_toggle[n]) { host.toggle_errors++; host_next(at + GAP * BIT); return; } // taken for a repeat
+                if (data1 != host.in_toggle[n]) { host.toggle_errors++; host_next(at + wire(gap_bits())); return; } // taken for a repeat
                 host.in_toggle[n] = !host.in_toggle[n];
             }
             if (t.data.size() + packet.size() > wanted || packet.size() > t.packet) { host.errors++; finish(FAILED, at); return; } // babble
             t.data.insert(t.data.end(), packet.begin(), packet.end());
-            if (packet.size() == t.packet && t.data.size() < wanted) { host_next(at + GAP * BIT); return; }
-            if (control) { t.stage = 3; host_next(at + GAP * BIT); return; }
+            if (packet.size() == t.packet && t.data.size() < wanted) { host_next(at + wire(gap_bits())); return; }
+            if (control) { t.stage = 3; host_next(at + wire(gap_bits())); return; }
         }
     } else {
         size_t size = control && t.stage == 3 ? 0 : std::min<size_t>(t.packet, t.data.size() - t.offset);
         Handshake answer = control && t.stage == 1 ? token_setup(t.setup.data()) :
             token_out(n, t.data.data() + t.offset, size, control ? true : host.out_toggle[n]);
         switch (answer) {
-        case Handshake::Nak: host_nak(at, (TOKEN + GAP + data_bits(size) + GAP + HANDSHAKE + GAP) * BIT); return;
+        case Handshake::Nak: host_nak(at, wire(token_bits() + gap_bits() + data_bits(size) + gap_bits() + handshake_bits() + gap_bits())); return;
         case Handshake::Stall: host.stalls++; finish(STALLED, at); return;
         case Handshake::None: host.errors++; finish(FAILED, at); return;
         default: break;
         }
-        if (control && t.stage == 1) { t.stage = wanted ? 2 : 3; host_next(at + GAP * BIT); return; }
+        if (control && t.stage == 1) { t.stage = wanted ? 2 : 3; host_next(at + wire(gap_bits())); return; }
         if (control && t.stage == 2) {
             t.offset += size;
             if (t.offset >= t.data.size()) t.stage = 3;
-            host_next(at + GAP * BIT);
+            host_next(at + wire(gap_bits()));
             return;
         }
         if (!control) {
             host.out_toggle[n] = !host.out_toggle[n];
             t.offset += size;
-            if (t.offset < t.data.size()) { host_next(at + GAP * BIT); return; }
+            if (t.offset < t.data.size()) { host_next(at + wire(gap_bits())); return; }
         }
     }
     if (control && !t.setup[0] && t.setup[1] == 5) { host.address = t.setup[2] & 127; host.free = at + 2 * FRAME; }
@@ -540,7 +540,8 @@ void Usb::host_step(uint64_t at) {
             host.port = Port::Enabled; host.reset_active = host.suspended = false; host.resets++;
             host.address = host.configuration = 0;
             host.out_toggle = {}; host.in_toggle = {};
-            host.sof_due = host.sof ? at + FRAME : UINT64_MAX;
+            host.microframe = 7; host.microframes = UINT64_MAX; // the first SOF starts frame + 1, microframe 0
+            host.sof_due = host.sof ? at + (host.high_speed ? MICROFRAME : FRAME) : UINT64_MAX;
             host.idle_due = host.sof ? UINT64_MAX : at + IDLE;
             if (!host.queue.empty()) host_next(at + RECOVERY); else host.free = at + RECOVERY;
         }
@@ -555,7 +556,11 @@ void Usb::host_step(uint64_t at) {
         return;
     }
     if (at >= host.sof_due) {
-        host.sof_due += FRAME; host.frame = (host.frame + 1) & 2047; host.sofs++;
+        host.sof_due += host.high_speed ? MICROFRAME : FRAME; host.sofs++;
+        if (host.high_speed) {
+            host.microframes++; host.microframe = (host.microframe + 1) & 7;
+            if (!host.microframe) host.frame = (host.frame + 1) & 2047; // FRAME counts 1 ms frames (USB 2.0 8.4.3.1)
+        } else host.frame = (host.frame + 1) & 2047;
         bus_activity(at);
         for (auto &e : endpoints) e.tx_held = 0;
         raise(0, 0, 8);
@@ -590,7 +595,7 @@ void Usb::sof(bool on, uint64_t cycle) {
     advance(cycle);
     host.sof = on;
     if (host.port != Port::Enabled) return;
-    host.sof_due = on ? cycle + FRAME : UINT64_MAX;
+    host.sof_due = on ? cycle + (host.high_speed ? MICROFRAME : FRAME) : UINT64_MAX;
     host.idle_due = on ? UINT64_MAX : cycle + IDLE;
 }
 uint32_t Usb::submit(Transfer transfer, uint64_t timeout, uint64_t cycle) {
@@ -598,7 +603,9 @@ uint32_t Usb::submit(Transfer transfer, uint64_t timeout, uint64_t cycle) {
     unsigned n = transfer.endpoint & 15;
     if (transfer.kind > IN || (transfer.kind == CONTROL ? n != 0 : n < 1 || n > 4))
         throw std::runtime_error("USB transfers go to endpoint 0 (control) or endpoints 1 to 4");
-    if (!transfer.packet || transfer.packet > 64) throw std::runtime_error("full-speed bulk, interrupt and control packets are 1 to 64 bytes");
+    if (!transfer.packet || transfer.packet > (transfer.kind == CONTROL ? 64 : packet_limit()))
+        throw std::runtime_error(host.high_speed ? "high-speed control packets are 1 to 64 bytes, bulk and interrupt 1 to 1024"
+                                                 : "full-speed bulk, interrupt and control packets are 1 to 64 bytes");
     if (transfer.kind == CONTROL) {
         bool reads = transfer.setup[0] & 0x80;
         uint32_t wanted = uint32_t(transfer.setup[6] | transfer.setup[7] << 8);
@@ -635,7 +642,8 @@ void Usb::toggle_reset(unsigned endpoint_address) {
 void Usb::iso_queue(unsigned n, std::vector<uint8_t> payload, uint64_t cycle) {
     advance(cycle);
     if (n < 1 || n > 4) throw std::runtime_error("isochronous streams go to endpoints 1 to 4");
-    if (payload.size() > 1023) throw std::runtime_error("a full-speed isochronous packet is at most 1023 bytes");
+    if (payload.size() > iso_packet_limit()) throw std::runtime_error(host.high_speed ? "a high-speed isochronous packet is at most 1024 bytes"
+                                                                                       : "a full-speed isochronous packet is at most 1023 bytes");
     if (host.port != Port::Enabled) throw std::runtime_error("an isochronous stream needs an enabled port");
     if (host.iso_out[n].out.size() >= 65536) throw std::runtime_error("too many isochronous packets queued");
     host.iso_out[n].out.push_back(std::move(payload));
@@ -643,7 +651,9 @@ void Usb::iso_queue(unsigned n, std::vector<uint8_t> payload, uint64_t cycle) {
 void Usb::iso_request(unsigned n, uint32_t frames, uint32_t packet, uint32_t short_below, uint64_t cycle) {
     advance(cycle);
     if (n < 1 || n > 4) throw std::runtime_error("isochronous streams go to endpoints 1 to 4");
-    if (!packet || packet > 1023 || short_below > 1023) throw std::runtime_error("a full-speed isochronous packet is at most 1023 bytes");
+    if (!packet || packet > iso_packet_limit() || short_below > iso_packet_limit())
+        throw std::runtime_error(host.high_speed ? "a high-speed isochronous packet is at most 1024 bytes"
+                                                 : "a full-speed isochronous packet is at most 1023 bytes");
     if (host.port != Port::Enabled) throw std::runtime_error("an isochronous stream needs an enabled port");
     auto &stream = host.iso_in[n];
     if (frames > (1u << 24) - stream.frames) throw std::runtime_error("too many isochronous frames asked for");
@@ -654,6 +664,14 @@ void Usb::iso_stop(unsigned address, uint64_t cycle) {
     unsigned n = address & 15;
     if (n < 1 || n > 4) throw std::runtime_error("isochronous streams go to endpoints 1 to 4");
     if (address & 0x80) host.iso_in[n].frames = 0; else host.iso_out[n].out.clear();
+}
+void Usb::iso_interval(unsigned address, uint32_t microframes, uint64_t cycle) {
+    advance(cycle);
+    unsigned n = address & 15;
+    if (n < 1 || n > 4) throw std::runtime_error("isochronous streams go to endpoints 1 to 4");
+    if (!microframes || microframes > 32768 || (microframes & (microframes - 1)))
+        throw std::runtime_error("an isochronous interval is 1 to 32768 microframes, a power of two");
+    (address & 0x80 ? host.iso_in[n] : host.iso_out[n]).interval = microframes;
 }
 bool Usb::iso_take(unsigned n, IsoPacket &packet) {
     auto &stream = host.iso_in.at(n);
