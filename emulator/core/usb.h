@@ -7,16 +7,21 @@
 #include <vector>
 
 // C6748 USB0: the TI wrapper, the MUSB core in peripheral mode (endpoint 0 and endpoints 1-4 with the
-// 4 KiB dynamic FIFO RAM) and a scripted full-speed host on the cable, after SPRUH79C chapter 33.
+// 4 KiB dynamic FIFO RAM) and a scripted USB 2.0 host on the cable, after SPRUH79C chapter 33.
 // Bulk, interrupt and isochronous endpoints carry data. Host/OTG operation, remote wake-up,
 // test modes and CPPI DMA traffic are not modelled (the DMA set-up registers a driver programs before
 // any transfer hold their values; DMAEN faults).
 //
 // Speed. POWER comes out of reset with HSENAB set, as on the C6748. The speed is settled during each bus
 // reset: with HSENAB set then, the core chirps, the host (a USB 2.0 host) answers and POWER.HSMODE reads 1
-// until the port goes down; with HSENAB clear the connection is full speed. Traffic is still run at full
-// speed with full-speed rules: a high-speed connection is counted (Host::high_speed_resets) for a test to
-// flag, not modelled.
+// until the port goes down; with HSENAB clear the connection is full speed. The host then runs the
+// connection at that speed (USB 2.0 5.5-5.8, 8.4.3):
+//   full speed: 12 Mbit/s, a SOF every 1 ms; bulk, interrupt and control packets of 1 to 64 bytes,
+//   isochronous up to 1,023;
+//   high speed: 480 Mbit/s, a SOF every 125 us microframe (FRAME, the 1 ms frame number, changes every
+//   eighth); control packets up to 64 bytes, bulk and interrupt up to 1,024, isochronous up to 1,024. An
+//   isochronous stream is served every `interval` microframes (2^(bInterval-1)); one transaction a
+//   microframe (no high-bandwidth endpoints). No PING or NYET: a busy bulk OUT endpoint NAKs the data.
 //
 // Interrupts (the wrapper's "PDR interrupt handler", CTRLR.UINT). The core latches endpoint events in
 // INTRTX/INTRRX and bus events in INTRUSB whether or not they are enabled in INTRTXE/INTRRXE/INTRUSBE.
@@ -30,15 +35,17 @@
 // while something is still pending. SPRUH79C states the register behaviour (33.2.8.13, 33.4.9-16,
 // 33.4.23-28) but not the hand-over or what gates it: that part is this model's reading.
 //
-// The host is timed in guest cycles: 31 a bit (372 MHz / 12 Mbit/s), no bit stuffing. A transaction
+// The host is timed in guest cycles: 31 a bit at full speed (372 MHz / 12 Mbit/s), 31/40 at high speed
+// (480 Mbit/s), with each speed's packet overheads and no bit stuffing. A transaction
 // takes effect at the cycle its handshake would end. A NAKed transaction is retried back to back;
 // the retries between a NAK and the next register access that could change the answer are counted,
 // not run. The host waits for the device's pull-up (SOFTCONN with the clock and PHY up), then
 // debounces, resets and starts sending SOFs.
 //
 // Isochronous endpoints (an endpoint direction with its ISO bit set; SPRUH79C 33.2.7.1.4). The host runs
-// streams: after each SOF, for endpoints 1 to 4 in turn, one OUT packet from the endpoint's queue and
-// one IN token if frames were asked for. There are no handshakes, retries or data toggles.
+// streams: after each SOF (frame or, at high speed, microframe), for endpoints 1 to 4 in turn, one OUT
+// packet from the endpoint's queue and one IN token if frames were asked for; at high speed only in the
+// microframes the stream's interval selects. There are no handshakes, retries or data toggles.
 //   OUT: with room in the FIFO the packet is stored and RXPKTRDY set (an interrupt as for bulk); with
 //   none the packet is lost and OVERRUN set.
 //   IN: a loaded packet is sent, then TXPKTRDY cleared and the interrupt raised; with none loaded the
@@ -50,6 +57,7 @@
 class Usb {
 public:
     static constexpr uint64_t BIT = 31, FRAME = 372000;                  // 372 MHz: 12 Mbit/s, 1 ms
+    static constexpr uint64_t MICROFRAME = FRAME / 8;                    // 125 us
     static constexpr uint64_t DEBOUNCE = 100 * FRAME, RESET = 10 * FRAME, RECOVERY = 10 * FRAME, IDLE = 3 * FRAME;
     enum class Handshake : uint8_t { Ack, Nak, Stall, None };
     enum class Port : uint8_t { Detached, Powered, Debounce, Reset, Enabled };
@@ -66,7 +74,8 @@ public:
     };
     // One isochronous IN token's outcome. status: 0 a data packet, 1 a zero-length packet, 2 no answer
     // (the device was not listening or the endpoint is not isochronous) or a packet above the stream's size.
-    struct IsoPacket { uint16_t frame = 0; uint8_t status = 0; uint64_t cycle = 0; std::vector<uint8_t> data; };
+    // `high_speed`: it happened on a high-speed connection, in microframe `microframe` (0 to 7) of `frame`.
+    struct IsoPacket { uint16_t frame = 0; uint8_t status = 0, microframe = 0; bool high_speed = false; uint64_t cycle = 0; std::vector<uint8_t> data; };
     // `done` counts OUT packets sent or IN tokens sent. OUT: `packets` reached the FIFO, `missed` found it
     // full, `errors` were not taken for another reason. IN: `packets` carried data, `missed` were
     // zero-length, `shorts` carried fewer than `short_below` bytes, `errors` as IsoPacket status 2.
@@ -75,6 +84,7 @@ public:
         std::deque<IsoPacket> in;             // IN: what arrived, until read (the latest 65536)
         uint32_t frames = 0;                  // IN: frames still to ask in
         uint16_t packet = 1023, short_below = 0;
+        uint32_t interval = 1;                // high speed: served every `interval` microframes
         uint64_t done = 0, packets = 0, bytes = 0, missed = 0, shorts = 0, errors = 0, dropped = 0;
     };
     struct Host {
@@ -84,6 +94,8 @@ public:
         uint64_t high_speed_resets = 0;
         uint8_t address = 0, configuration = 0;
         uint16_t frame = 0;
+        uint8_t microframe = 0;          // high speed: the last SOF's microframe in `frame`, 0 to 7
+        uint64_t microframes = 0;        // high speed: SOFs since the port was enabled
         std::array<bool, 5> out_toggle{}, in_toggle{};
         uint64_t port_due = UINT64_MAX, sof_due = UINT64_MAX, idle_due = UINT64_MAX, transfer_due = UINT64_MAX;
         uint64_t free = 0;               // when the bus is next free for a transaction
@@ -171,6 +183,13 @@ private:
     void iso_next(uint64_t free, unsigned slot);
     void iso_step(uint64_t at);
     uint64_t host_due() const;
+    // Wire time at the negotiated speed: cycles for `bits` bit times, and each packet's length in bit
+    // times (sync and PID, the fields, EOP). The gap is the inter-packet delay before the next packet.
+    uint64_t wire(uint64_t bits) const { return host.high_speed ? (bits * 31 + 39) / 40 : bits * BIT; }
+    uint64_t token_bits() const { return host.high_speed ? 64 : 35; }
+    uint64_t handshake_bits() const { return host.high_speed ? 48 : 19; }
+    uint64_t gap_bits() const { return host.high_speed ? 32 : 4; }
+    uint64_t data_bits(size_t size) const { return (host.high_speed ? 64 : 35) + 8 * uint64_t(size); }
 public:
     bool phy_ready = false;
     uint64_t resets = 0, interrupts = 0;
@@ -207,6 +226,11 @@ public:
     void iso_queue(unsigned n, std::vector<uint8_t> payload, uint64_t cycle);
     void iso_request(unsigned n, uint32_t frames, uint32_t packet, uint32_t short_below, uint64_t cycle);
     void iso_stop(unsigned address, uint64_t cycle);
+    // A stream's service interval in microframes (1 to 32768, a power of two); used at high speed only.
+    void iso_interval(unsigned address, uint32_t microframes, uint64_t cycle);
+    // The largest packet at the negotiated speed: bulk/interrupt (control is 64 at either speed), isochronous.
+    uint32_t packet_limit() const { return host.high_speed ? 1024 : 64; }
+    uint32_t iso_packet_limit() const { return host.high_speed ? 1024 : 1023; }
     bool iso_take(unsigned n, IsoPacket &packet);
     const IsoStream &iso(unsigned address) const;
     uint64_t iso_errors() const;

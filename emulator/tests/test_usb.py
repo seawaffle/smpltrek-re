@@ -1,5 +1,5 @@
 """USB0 checks derived from SPRUH79C register behavior: the control plane with no cable, then the MUSB core in
-peripheral mode and the TI wrapper's interrupts against the scripted full-speed host (the test plays the firmware)."""
+peripheral mode and the TI wrapper's interrupts against the scripted host, at full and high speed (the test plays the firmware)."""
 from pathlib import Path
 import shutil
 import struct
@@ -1006,6 +1006,210 @@ class UsbHost(unittest.TestCase):
         self.assertEqual([row["status"] for row in fast[:3]] + [fast[3], fast[4]["status"]],
                          ["ok", "ok", "disconnected", "powered", "disconnected"])
         self.assertEqual((fast[0]["data"], fast[1]["sent"], fast[5]["bus_resets"], fast[5]["port"]), (b"12345678", 5, 2, "reset"))
+
+
+MICROFRAME = FRAME // 8
+
+
+def hs_wire(bits):
+    """Cycles for `bits` bit times at 480 Mbit/s (372 MHz: 31/40 cycle a bit, rounded up)."""
+    return (bits * 31 + 39) // 40
+
+
+@unittest.skipUnless(shutil.which("g++"), "host g++ required")
+class UsbHighSpeed(unittest.TestCase):
+    """A connection whose bus reset settled on high speed (HSENAB set): microframes, 480 Mbit/s timing and
+    high-speed packet sizes (USB 2.0 5.5-5.8, 8.4.3.1; SPRUH79C 33.2.7.1.4). Full speed is UsbHost's."""
+    setUpClass = classmethod(UsbDisconnected.setUpClass.__func__)
+    tearDownClass = classmethod(UsbDisconnected.tearDownClass.__func__)
+    machine, enable_clock = UsbDisconnected.machine, UsbDisconnected.enable_clock
+    get, put = staticmethod(UsbDisconnected.get), staticmethod(UsbDisconnected.put)
+    device, acknowledge, finished = UsbHost.device, UsbHost.acknowledge, UsbHost.finished
+    until, unload, load, configure = UsbHost.until, UsbHost.unload, UsbHost.load, UsbHost.configure
+
+    def plugged(self, sof=False, power=0x60):
+        """As UsbHost.plugged, with HSENAB left on: the port comes up at high speed."""
+        cpu = self.device(connect=False, sof=sof)
+        self.put(cpu, BASE + 0x401, power, 1)
+        cpu.usb_attach()
+        cpu.run(DEBOUNCE + RESET + RECOVERY)
+        state = cpu.usb_state()
+        self.assertEqual((state["port"], state["speed"], state["profile"]),
+                         ("enabled", "high", "USB0 peripheral with a scripted high-speed host"))
+        self.acknowledge(cpu)
+        return cpu
+
+    def test_sof_every_microframe_and_frame_changes_every_eighth(self):
+        def script(fast_forward):
+            with self.device(connect=False, sof=True) as cpu:
+                cpu.fast_forward(fast_forward)
+                self.put(cpu, BASE + 0x401, 0x60, 1)
+                cpu.usb_attach()
+                cpu.run(DEBOUNCE + RESET)                                 # the port is enabled now
+                self.acknowledge(cpu)
+                frame = self.get(cpu, BASE + 0x40c, 2)
+                cpu.run(MICROFRAME - 1)
+                rows = [(self.get(cpu, BASE + 0x20) & SOF_IRQ, cpu.usb_state()["sofs"])]
+                for _ in range(16):                                       # the SOF lands on each 46,500th cycle
+                    cpu.run(1)
+                    rows.append((self.acknowledge(cpu) & SOF_IRQ, (self.get(cpu, BASE + 0x40c, 2) - frame) & 2047))
+                    cpu.run(MICROFRAME - 1)
+                interrupts = cpu.usb_state()["interrupts"]
+                for _ in range(8):                                        # 1 ms, each interrupt acknowledged
+                    cpu.run(MICROFRAME)
+                    self.acknowledge(cpu)
+                rows.append((cpu.usb_state()["sofs"], cpu.usb_state()["interrupts"] - interrupts))
+                return rows
+        fast, slow = script(True), script(False)
+        self.assertEqual(fast, slow)
+        self.assertEqual(fast[0], (0, 0))
+        self.assertEqual(fast[1:17], [(SOF_IRQ, 1)] * 8 + [(SOF_IRQ, 2)] * 8)   # FRAME: the 1 ms frame number
+        self.assertEqual(fast[17], (24, 8))                               # 8 SOF interrupts a millisecond
+
+    def test_bulk_packets_of_512_at_480_mbit(self):
+        RX1, TX2 = 1 << 9, 1 << 2
+        with self.plugged() as cpu:
+            self.configure(cpu, 1, rx=(6, 8, 512))                        # one 512-byte packet at 64
+            self.configure(cpu, 2, tx=(6, 72, 512))                       # one 512-byte packet at 576
+            data = bytes(range(256)) * 4
+            start = cpu.cycles()
+            transfer = cpu.usb_out(1, data, wait=False, max_packet=512)
+            # token 64, gap 32, data 64 + 8 x 512, gap 32, handshake 48 bit times
+            first = start + hs_wire(64 + 32 + 64 + 8 * 512 + 32 + 48)
+            cpu.run(first - 1 - cpu.cycles())
+            self.assertFalse(self.get(cpu, BASE + 0x20) & RX1)
+            cpu.run(1)
+            self.assertTrue(self.acknowledge(cpu) & RX1)
+            self.assertEqual(self.get(cpu, BASE + 0x518, 2), 512)
+            got = self.unload(cpu, 1, (4,) * 128)
+            self.put(cpu, BASE + 0x516, 0, 1)
+            self.until(cpu, RX1, milliseconds=1)
+            got += self.unload(cpu, 1, (4,) * 128)
+            self.put(cpu, BASE + 0x516, 0, 1)
+            result = self.finished(cpu, transfer, milliseconds=1)
+            self.assertEqual((result["status"], result["sent"], got), ("ok", 1024, data))
+            self.assertLess(result["completed"] - start, MICROFRAME)       # both packets well inside a microframe
+
+            # IN: a 512-byte packet does not end the transfer, the 88-byte one after it does.
+            transfer = cpu.usb_in(0x82, 4096, wait=False, max_packet=512)
+            self.load(cpu, 2, data[:512], (4,) * 128)
+            self.put(cpu, BASE + 0x522, 1, 1)
+            self.until(cpu, TX2, milliseconds=1)
+            self.load(cpu, 2, data[512:600], (4,) * 22)
+            self.put(cpu, BASE + 0x522, 1, 1)
+            result = self.finished(cpu, transfer, milliseconds=1)
+            self.assertEqual((result["status"], result["data"]), ("ok", data[:600]))
+            # A packet above the host's size is babble, as at full speed.
+            self.acknowledge(cpu)
+            self.load(cpu, 2, data[:512], (4,) * 128)
+            self.put(cpu, BASE + 0x522, 1, 1)
+            self.assertEqual(self.finished(cpu, cpu.usb_in(0x82, 4096, wait=False, max_packet=64), milliseconds=1)["status"], "error")
+            state = cpu.usb_state()
+            self.assertEqual((state["errors"], state["toggle_errors"]), (1, 0))
+
+            with self.assertRaisesRegex(ValueError, "high-speed control packets are 1 to 64 bytes, bulk and interrupt 1 to 1024"):
+                cpu.usb_out(1, b"x", wait=False, max_packet=1025)
+            with self.assertRaisesRegex(ValueError, "high-speed control packets are 1 to 64"):
+                cpu.usb_control((0x80, 6, 0x0100, 0), 18, wait=False, max_packet=128)
+        with UsbHost.plugged(self) as cpu:                                # full speed keeps its limit
+            with self.assertRaisesRegex(ValueError, "full-speed bulk, interrupt and control packets are 1 to 64 bytes"):
+                cpu.usb_out(1, b"x", wait=False, max_packet=512)
+
+    def iso(self, cpu):
+        """Endpoint 1 isochronous OUT and endpoint 2 isochronous IN, one 1024-byte packet each."""
+        self.configure(cpu, 1, rx=(7, 8, 1024))
+        self.put(cpu, BASE + 0x517, 0x40, 1)                              # RXCSR.ISO
+        self.configure(cpu, 2, tx=(7, 136, 1024))
+        self.put(cpu, BASE + 0x523, 0x60, 1)                              # TXCSR.ISO, MODE
+
+    def test_isochronous_streams_per_microframe_and_interval(self):
+        RX1 = 1 << 9
+        with self.plugged(sof=True) as cpu:
+            self.iso(cpu)
+            cpu.run(MICROFRAME // 2)
+            rows = cpu.usb_iso_stream_in(0x82, 10)                        # nothing loaded: zero-length packets
+            self.assertEqual([row["status"] for row in rows], ["empty"] * 10)
+            slots = [(row["frame"] * 8 + row["microframe"]) for row in rows]
+            self.assertEqual([b - a for a, b in zip(slots, slots[1:])], [1] * 9)   # one token every microframe
+            self.assertEqual([b["cycles"] - a["cycles"] for a, b in zip(rows, rows[1:])], [MICROFRAME] * 9)
+            rows = cpu.usb_iso_stream_in(0x82, 4, interval=4)             # bInterval 3: every fourth microframe
+            slots = [(row["frame"] * 8 + row["microframe"]) for row in rows]
+            self.assertEqual([b - a for a, b in zip(slots, slots[1:])], [4] * 3)
+
+            # 1024 bytes each way in a microframe.
+            data = bytes(range(256)) * 4
+            self.load(cpu, 2, data, (4,) * 256)
+            self.put(cpu, BASE + 0x522, 1, 1)
+            self.assertEqual([(row["status"], row["data"]) for row in cpu.usb_iso_stream_in(0x82, 1, interval=1)],
+                             [("data", data)])
+            self.acknowledge(cpu)
+            cpu.usb_iso_stream_out(1, [data], wait=True, interval=1)
+            self.assertTrue(self.acknowledge(cpu) & RX1)
+            self.assertEqual((self.get(cpu, BASE + 0x518, 2), self.unload(cpu, 1, (4,) * 256)), (1024, data))
+            self.put(cpu, BASE + 0x516, 0, 1)
+            with self.assertRaisesRegex(ValueError, "high-speed isochronous packet is at most 1024 bytes"):
+                cpu.usb_iso_stream_out(1, [bytes(1025)])
+            with self.assertRaisesRegex(ValueError, "interval"):
+                cpu.usb_iso_stream_in(0x82, 1, interval=3)
+            state = cpu.usb_state()
+            self.assertEqual((state["iso_errors"], state["iso_underruns"]), (0, 1))
+
+    def test_isoupdate_holds_a_packet_until_the_next_microframe(self):
+        def first_microframes(power):
+            with self.plugged(sof=True, power=power) as cpu:
+                self.iso(cpu)
+                cpu.usb_iso_stream_in(0x82, 2, wait=False, interval=1)
+                cpu.run(MICROFRAME + 1)                                   # just after the SOF, before the IN token
+                self.load(cpu, 2, b"held", (4,))
+                self.put(cpu, BASE + 0x522, 1, 1)
+                cpu.run(2 * MICROFRAME)
+                rows = cpu.usb_iso_collect(0x82)
+                return [(row["status"], row["data"]) for row in rows], rows[1]["frame"] * 8 + rows[1]["microframe"] - \
+                    (rows[0]["frame"] * 8 + rows[0]["microframe"])
+        self.assertEqual(first_microframes(0x60), ([("data", b"held"), ("empty", b"")], 1))
+        self.assertEqual(first_microframes(0xe0), ([("empty", b""), ("data", b"held")], 1))   # ISOUPDATE
+
+    def test_enumerate_takes_high_speed_sizes_and_reads_the_qualifier(self):
+        """usb_enumerate's host side, over scripted descriptors: the test answers each control transfer."""
+        def endpoint(address, attributes, size, interval):
+            return struct.pack("<BBBBHB", 7, 5, address, attributes, size, interval)
+        body = (struct.pack("<BBBBBBBBB", 9, 4, 0, 0, 4, 0xff, 0, 0, 0) + endpoint(0x01, 2, 512, 0) + endpoint(0x81, 2, 512, 0)
+                + endpoint(0x02, 3, 64, 4) + endpoint(0x83, 1, 1024, 3))
+        configuration = struct.pack("<BBHBBBBB", 9, 2, 9 + len(body), 1, 1, 0, 0x80, 50) + body
+        other = bytes([9, 7]) + configuration[2:]
+        device = struct.pack("<BBHBBBBHHHBBBB", 18, 1, 0x0200, 0, 0, 0, 64, 0x1234, 0x5678, 0x0100, 0, 0, 0, 1)
+        qualifier = struct.pack("<BBHBBBBBB", 10, 6, 0x0200, 0, 0, 0, 64, 1, 0)
+
+        def run(speed, has_qualifier):
+            with self.machine() as cpu:
+                asked = []
+                cpu.usb_state = lambda: dict(cable_connected=True, port="enabled", speed=speed)
+                cpu._usb_iso_set_interval = lambda address, interval: None
+                def control(setup, size=None, timeout_ms=1000, **options):
+                    kind, request, value = setup[0], setup[1], setup[2]
+                    asked.append((request, value >> 8))
+                    answers = {1: device, 2: configuration, 6: qualifier if has_qualifier else None, 7: other}
+                    if request != 6:
+                        return dict(status="ok", data=b"")
+                    answer = answers[value >> 8]
+                    if answer is None:
+                        return dict(status="stall", data=b"")
+                    return dict(status="ok", data=answer[:size])
+                cpu.usb_control = control
+                return cpu.usb_enumerate(), asked, dict(cpu.usb_packets), dict(cpu.usb_iso_packets), dict(cpu.usb_iso_intervals)
+        found, asked, packets, iso, intervals = run("high", True)
+        self.assertEqual((found["speed"], found["qualifier"], found["other_speed_configuration"]), ("high", qualifier, other))
+        self.assertEqual((packets, iso, intervals), ({0x01: 512, 0x81: 512, 0x02: 64}, {0x83: 1024}, {0x83: 4}))
+        self.assertEqual([row["interval"] for row in found["endpoints"]], [0, 0, 4, 3])
+        self.assertEqual(asked, [(6, 1), (5, 0), (6, 1), (6, 2), (6, 2), (6, 6), (6, 7), (6, 7), (9, 0)])
+        found, asked, _, _, _ = run("high", False)                        # a stalled qualifier: one speed only
+        self.assertEqual((found["qualifier"], found["other_speed_configuration"]), (None, None))
+        self.assertEqual(asked[-2:], [(6, 6), (9, 0)])
+        found, asked, packets, iso, intervals = run("full", True)         # full speed: as before
+        self.assertEqual((packets, iso, intervals), ({0x01: 64, 0x81: 64, 0x02: 64}, {0x83: 1023}, {}))
+        self.assertNotIn("speed", found)
+        self.assertNotIn("interval", found["endpoints"][0])
+        self.assertNotIn(6, [kind for _, kind in asked])
 
 
 if __name__ == "__main__":

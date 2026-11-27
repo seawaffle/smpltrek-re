@@ -5,7 +5,7 @@ firmware. The [C++ C674x core](core/README.md) executes original DSP binaries, i
 instruction and cycle by cycle, with models of the board's peripherals: timers and interrupts,
 EDMA, SPI1 and the OLED panel, I2C0 and the TLV320AIC3106 codec, McASP0 audio, MMC/SD with a FAT
 card image, the SPI NOR flash, UART1 to the panel MCU, UART0 with a MIDI IN sender and timestamped
-MIDI OUT, USB0 as a device with a scripted full-speed host, and the GPIO key matrix, encoders and SYNC pins. It runs SmplTrek, Lofi-12 XT and CyDrums updates (one board, the same panel) and a linked
+MIDI OUT, USB0 as a device with a scripted USB 2.0 host (full or high speed), and the GPIO key matrix, encoders and SYNC pins. It runs SmplTrek, Lofi-12 XT and CyDrums updates (one board, the same panel) and a linked
 DSP program (ELF) you supply. It starts where the bootloader hands over to the SYSTEM image; the
 bootloader itself is not run. The emulator builds no firmware of its own, and no Sonicware code is
 in this repository: download the updates into `firmware/` (layout in `firmware/README.md`).
@@ -80,7 +80,7 @@ against the stock firmware's behaviour:
 - **Board:** interrupt event routing, PSC, pin mux, GPIO, the four timers, EDMA3, SPI0 (NOR) and
   SPI1 (OLED), I2C0 and the codec's control registers, McASP0 and its DMA ring, MMCSD0 with PIO and
   EDMA (SD 2.0 SDSC, single and multiblock), UART0 (MIDI DIN) and UART1, the SYNC IN and SYNC OUT
-  pins ([MIDI and SYNC](#midi-and-sync-2026-11-20)), USB0 as a full-speed device with a scripted
+  pins ([MIDI and SYNC](#midi-and-sync-2026-11-20)), USB0 as a full- or high-speed device with a scripted
   host ([USB device](#usb-device-and-scripted-host-2026-11-20)), the DDR controller's status registers, and the cache control registers
   (memory is coherent). One guest clock drives everything: 372 MHz CPU, 24 MHz timer 0/1 input.
 - **Unit measurements** from device sessions M1 to M3 (`experiments/README.md`): misaligned
@@ -991,7 +991,7 @@ to `observed-device`.
 
 USB0 is modelled as SPRUH79C chapter 33 describes it: the TI wrapper at `0x01E00000`, the MUSB core
 in peripheral mode at `0x01E00400`, and the PHY status in CFGCHIP2. On the cable is a scripted
-full-speed host, timed in guest cycles inside the core like the MIDI and SYNC peers, so a run is
+USB 2.0 host, at full or high speed as the bus reset settled it (High speed, below), timed in guest cycles inside the core like the MIDI and SYNC peers, so a run is
 identical with fast-forward or without. From Python (`cpu.py`):
 
 | Call | What it does |
@@ -999,13 +999,13 @@ identical with fast-forward or without. From Python (`cpu.py`):
 | `usb_attach()` | Plug the cable in: VBUS now (DEVCTL `0x99`, CFGCHIP2 USB0VBUSSENSE). When the device's pull-up shows (SOFTCONN with PSC1 module 1 on and the PHY clock good) the host debounces for 100 ms, resets the bus for 10 ms and enables the port; the first transfer starts 10 ms later. |
 | `usb_detach()` | Unplug: the session ends (INTRUSB DISCON), a transfer under way ends as `"disconnected"`. |
 | `usb_reset()` | Reset an enabled port again. |
-| `usb_sof(on)` | The 1 ms start-of-frame (372,000 cycles), on by default from the end of reset. Off, an idle bus suspends the device 3 ms after the last packet and the next packet resumes it. |
+| `usb_sof(on)` | The 1 ms start-of-frame (372,000 cycles; at high speed every 125 µs microframe, 46,500 cycles), on by default from the end of reset. Off, an idle bus suspends the device 3 ms after the last packet and the next packet resumes it. |
 | `usb_control(setup, data_or_length)` | SETUP, data stage, status stage. `setup` is the 8 bytes, or `(bmRequestType, bRequest, wValue, wIndex)` with wLength taken from the data or length. Returns a result (below); a STALL in any stage gives `status == "stall"`. |
-| `usb_out(ep, data)`, `usb_in(ep, max_length)` | Bulk or interrupt transfers in packets of the endpoint's size, retried while the device answers NAK. `usb_in` ends at `max_length` bytes or a short packet. |
-| `usb_enumerate(address=1)` | Waits for the port, then: 8 bytes of the device descriptor, SET_ADDRESS, the device descriptor, the configuration descriptor (9 bytes, then all of it), SET_CONFIGURATION. Returns the descriptors, vendor, product, the endpoints found and each step's result; raises `UsbError` if a step fails. Later transfers use the packet sizes it read. |
+| `usb_out(ep, data)`, `usb_in(ep, max_length)` | Bulk or interrupt transfers in packets of the endpoint's size (64 at most at full speed, 1,024 at high speed), retried while the device answers NAK. `usb_in` ends at `max_length` bytes or a short packet. |
+| `usb_enumerate(address=1)` | Waits for the port, then: 8 bytes of the device descriptor, SET_ADDRESS, the device descriptor, the configuration descriptor (9 bytes, then all of it), SET_CONFIGURATION. Returns the descriptors, vendor, product, the endpoints found and each step's result; raises `UsbError` if a step fails. Later transfers use the packet sizes it read. At high speed it also reads the device qualifier and the other-speed configuration (a stall is accepted) and the result adds `speed`, `qualifier`, `other_speed_configuration` and each endpoint's `interval`. |
 | `usb_set_interface(interface, alternate)` | SET_INTERFACE, as a host does to open (1) or close (0) an audio streaming interface. Any other request goes through `usb_control`. |
-| `usb_iso_stream_out(ep, packets)` | Queue payloads for an isochronous OUT endpoint, one packet per frame. See "Isochronous streams" below. |
-| `usb_iso_stream_in(ep, frames)`, `usb_iso_collect(ep)` | Ask an isochronous IN endpoint for a packet in each of the next frames; returns them with their frame numbers. |
+| `usb_iso_stream_out(ep, packets)` | Queue payloads for an isochronous OUT endpoint, one packet per frame (at high speed per service interval). See "Isochronous streams" below. |
+| `usb_iso_stream_in(ep, frames)`, `usb_iso_collect(ep)` | Ask an isochronous IN endpoint for a packet in each of the next frames (service intervals at high speed); returns them with their frame numbers (and microframes at high speed). |
 | `usb_iso_state(ep)`, `usb_iso_stop(ep)` | One stream's counts; drop what is queued. |
 | `usb_state()` | `port` (`detached`, `powered`, `debounce`, `reset`, `enabled`), `address` and `configuration` (the host's), `device_address` (what the controller answers to), `naks`, `stalls`, `errors`, `toggle_errors`, `bus_resets`, `sofs`, `frame`, `suspended`, `interrupt_mode`, `fifo_overflows`, `fifo_underflows`, and for each of endpoints 1 to 4 its packet sizes, FIFO placement, waiting packets and stall state. |
 
@@ -1023,7 +1023,28 @@ NAKed or stalled and 97 + 8 per byte more for one that returns data; 4 bit times
 transactions. Bit stuffing is not counted. A NAKed transaction is retried back to back (every 62
 bit times for an IN); the retries between a NAK and the firmware's next access to USB0 are counted,
 not run, so NAK counts and completion cycles are exact while an idle wait costs nothing. After
-SET_ADDRESS the host waits 2 ms.
+SET_ADDRESS the host waits 2 ms. These figures are full speed's; high speed's follow.
+
+**High speed (2026-11-26).** When the bus reset settled on high speed (HSENAB set, POWER.HSMODE
+reads 1) the host runs the connection by high-speed rules (USB 2.0 5.5-5.8, 8.4.3.1):
+
+- *Timing.* 480 Mbit/s: a bit is 31/40 cycle, a packet's cycles rounded up. Packets are 64 bit times
+  of overhead (token 64, handshake 48, data 64 + 8 per byte) and 32 bit times separate them, so a
+  512-byte bulk OUT takes 4,336 bit times (3,361 cycles, 9 µs). No bit stuffing, PING or NYET: a busy
+  bulk OUT endpoint NAKs the data packet and the host retries it.
+- *Microframes.* A SOF every 125 µs (46,500 cycles), each an INTRUSB SOF interrupt when enabled
+  (SPRUH79C 33.2.7.1.4: one per frame or microframe). FRAME holds the 1 ms frame number and changes
+  every eighth microframe; `usb_state()["sofs"]` counts microframes. ISOUPDATE holds a loaded packet
+  until the next microframe's SOF.
+- *Packet sizes.* Control 1 to 64 bytes; bulk and interrupt 1 to 1,024 (`usb_enumerate` takes the
+  descriptors' sizes, 512 for high-speed bulk); isochronous 0 to 1,024. A packet above the size is
+  babble, as at full speed.
+- *Isochronous.* A stream is served every `interval` microframes, 2^(bInterval-1) from
+  `usb_enumerate` (or the `interval` argument), one transaction a microframe: no high-bandwidth
+  endpoints. `usb_iso_collect` rows add `microframe` (0 to 7).
+
+At full speed nothing changes: the timings above, 1 ms frames, the 64 / 1,023 limits, and the same
+results from `usb_enumerate`, `usb_iso_collect` and `usb_state` (whose `profile` names the speed).
 
 **What the controller model covers** (register behaviour from SPRUH79C 33.2.6, 33.2.7.1 and 33.4):
 
@@ -1051,8 +1072,8 @@ SET_ADDRESS the host waits 2 ms.
 - FADDR: the controller answers to the new address from the end of the status stage of the control
   transfer during which it was written; written between transfers, at once. Both orders in use
   (write on decoding SET_ADDRESS, or after the status-stage interrupt as SPRUH79C says) work.
-- POWER (SOFTCONN; RESET reads 1 during bus reset, SUSPENDM while suspended; HSEN is held and has
-  no effect), DEVCTL, FRAME (the last SOF's number), INTRTX/INTRRX/INTRUSB with their enables.
+- POWER (SOFTCONN; RESET reads 1 during bus reset, SUSPENDM while suspended; HSENAB decides the
+  speed at each bus reset and HSMODE shows it; ISOUPDATE), DEVCTL, FRAME (the last SOF's number), INTRTX/INTRRX/INTRUSB with their enables.
   Bus reset clears FADDR, INDEX, the FIFOs and the CSRs and keeps packet sizes and FIFO placement.
 - The wrapper: CTRLR (RESET, UINT), INTSRCR, INTSETR, INTCLRR, INTMSKR and its set and clear
   registers, INTMASKEDR, EOIR, and event 19.
@@ -1166,12 +1187,12 @@ either.
 
 **Limits.**
 
-- Full-speed traffic only. POWER resets with HSENAB (`0x20`) set, as on the C6748, and each bus
-  reset settles the speed from it: set, the core chirps and POWER.HSMODE reads 1 until the port goes
-  down; clear, the connection is full speed. A firmware that only ORs SOFTCONN in therefore reads
-  back high speed, as the unit ran Enaga in session 6. The host still runs full-speed traffic under
-  full-speed rules, so a high-speed connection is not modelled further: `usb_state()` reports
-  `speed` and counts `high_speed_resets` for a test to flag.
+- The speed. POWER resets with HSENAB (`0x20`) set, as on the C6748, and each bus reset settles the
+  speed from it: set, the core chirps and POWER.HSMODE reads 1 until the port goes down; clear, the
+  connection is full speed. A firmware that only ORs SOFTCONN in therefore runs at high speed, as the
+  unit ran Enaga in session 6. `usb_state()` reports `speed` and counts `high_speed_resets`. High
+  speed has no PING/NYET, no high-bandwidth isochronous endpoints and no chirp timing (the reset
+  takes the same 10 ms either way).
 - DMAEN faults: CPPI DMA has set-up registers only, so the stock card-reader mode
   (mass storage over DMA) cannot run.
 - An isochronous stream carries exactly what the test queued, one packet a frame. The host does

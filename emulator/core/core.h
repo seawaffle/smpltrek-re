@@ -120,7 +120,8 @@ int c6_usb_sof(void *machine, uint32_t enabled);
 /* Queues a transfer; the host runs them one at a time as the guest runs. kind: 0 control (setup[8];
    `data` and `size` for a write request's data stage, wLength bytes come back for a read request),
    1 OUT (`data`), 2 IN (up to `length` bytes, ended by a short packet). `endpoint` is 1 to 4 for OUT
-   and IN. `max_packet` is the endpoint's packet size, 1 to 64. `timeout` is in guest cycles from now. */
+   and IN. `max_packet` is the endpoint's packet size: 1 to 64 for control and at full speed, 1 to 1024
+   for bulk and interrupt at high speed. `timeout` is in guest cycles from now. */
 int c6_usb_submit(void *machine, uint32_t kind, uint32_t endpoint, const uint8_t *setup, const uint8_t *data, uint32_t size,
                   uint32_t length, uint32_t max_packet, uint64_t timeout, uint32_t *id);
 /* fields[7]: status (0 pending, 1 done, 2 stalled, 3 timed out, 4 disconnected or reset, 5 no answer
@@ -144,18 +145,23 @@ int c6_usb_host_stats(void *machine, uint64_t *fields);
    to go, packets waiting to be unloaded, IN stalled, OUT stalled, TXCSR high byte, RXCSR high byte,
    UNDERRUN, OVERRUN. */
 int c6_usb_endpoint(void *machine, uint32_t number, uint64_t *fields);
-/* Isochronous streams on endpoints 1 to 4 of an enabled port (usb.h). Each frame, after the SOF, the host
-   sends one queued OUT packet per endpoint and one IN token per endpoint with frames asked for; nothing
-   is retried. c6_usb_iso_out queues `count` packets, `sizes[i]` bytes each (0 to 1023), taken in turn
+/* Isochronous streams on endpoints 1 to 4 of an enabled port (usb.h). Each frame (at high speed each
+   microframe the stream's interval selects), after the SOF, the host sends one queued OUT packet per
+   endpoint and one IN token per endpoint with frames asked for; nothing is retried. c6_usb_iso_out
+   queues `count` packets, `sizes[i]` bytes each (0 to 1023, at high speed 0 to 1024), taken in turn
    from `data`. c6_usb_iso_in asks for `frames` more IN tokens; a packet above `max_packet` is an error,
    one with data but under `short_below` counts as short. c6_usb_iso_stop drops what is queued or still
    asked for (address with bit 7 for IN). A bus reset or unplugging does the same. */
 int c6_usb_iso_out(void *machine, uint32_t endpoint, const uint8_t *data, const uint32_t *sizes, uint32_t count);
 int c6_usb_iso_in(void *machine, uint32_t endpoint, uint32_t frames, uint32_t max_packet, uint32_t short_below);
 int c6_usb_iso_stop(void *machine, uint32_t address);
+/* A stream's service interval at high speed (address with bit 7 for IN): every `microframes` microframes,
+   1 to 32768, a power of two (2^(bInterval-1)). Full speed serves every frame. Kept until changed. */
+int c6_usb_iso_interval(void *machine, uint32_t address, uint32_t microframes);
 /* Takes the IN tokens' outcomes, oldest first, while rows and data fit (the latest 65536 are kept until
    taken). rows, three per token: status << 16 | frame number (status 0 data, 1 zero-length packet, 2 no
-   answer or a packet above max_packet), the cycle the transaction ended, the data size.
+   answer or a packet above max_packet) | microframe << 20 | 1 << 23 if on a high-speed connection
+   (microframe 0 to 7; both 0 at full speed), the cycle the transaction ended, the data size.
    fields[3]: rows copied, bytes copied, outcomes still waiting. */
 int c6_usb_iso_read(void *machine, uint32_t endpoint, uint64_t *rows, uint32_t row_capacity, uint8_t *data, uint32_t capacity, uint64_t *fields);
 /* One stream (address with bit 7 for IN). fields[9]: OUT packets queued or IN frames still asked for,
